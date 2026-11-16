@@ -21,10 +21,13 @@ jobs:
       - name: Toolchain
         run: swift --version
       # Package.resolved pins the versions releases are built with, on a newer Swift than this
-      # runner's. When a pinned version needs a newer tools version, resolve again for this
-      # toolchain (CI checks the code; scripts/release.sh builds with the exact pins).
-      - name: Resolve packages
-        run: swift package resolve || swift package update
+      # runner's, and some pinned versions need a newer tools version. CI resolves the newest
+      # versions this toolchain supports instead (it checks the code; scripts/release.sh builds
+      # with the exact pins).
+      - name: Resolve packages for this toolchain
+        run: |
+          rm -f Package.resolved
+          swift package resolve
       - name: Build
         run: swift build
       # With Xcode installed (as on GitHub's macOS runners) plain `swift test` runs the
