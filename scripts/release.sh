@@ -27,12 +27,28 @@ case "$SIGN_IDENTITY" in
   *) echo "SIGN_IDENTITY must be a Developer ID Application identity" >&2; exit 64 ;;
 esac
 
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "The working tree has uncommitted changes; commit them first so the build matches a commit." >&2
-  exit 65
-fi
+# Everything the build reads from the working tree must be in the commit: modified tracked files
+# and also files git does not know yet (SwiftPM compiles every .swift file in a target folder, so
+# an untracked source would be built into the signed app).
+BUILD_INPUTS="Sources Plugins Resources scripts Package.swift Package.resolved VERSION LICENSE THIRD_PARTY_NOTICES.txt"
+check_tree_matches_commit() {
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "$1 The working tree has uncommitted changes; commit them first so the build matches a commit." >&2
+    git status --short --untracked-files=no >&2
+    exit 65
+  fi
+  # shellcheck disable=SC2086
+  UNTRACKED="$(git ls-files --others --exclude-standard -- $BUILD_INPUTS)"
+  if [ -n "$UNTRACKED" ]; then
+    echo "$1 These files are not in git, so the build would not match a commit:" >&2
+    echo "$UNTRACKED" >&2
+    exit 65
+  fi
+}
+check_tree_matches_commit "Before the build:"
 
 echo "==> Tests"
+mkdir -p build
 scripts/test.sh > build/release-tests.log 2>&1 || { tail -20 build/release-tests.log; exit 1; }
 tail -1 build/release-tests.log
 
@@ -44,12 +60,40 @@ git diff --quiet -- THIRD_PARTY_NOTICES.txt || {
   echo "THIRD_PARTY_NOTICES.txt is out of date for this build; commit the regenerated file and rerun." >&2
   exit 1
 }
+# The build must not have changed or added anything it reads (a re-resolved Package.resolved, a
+# regenerated file).
+check_tree_matches_commit "After the build:"
 for f in THIRD_PARTY_NOTICES.txt LICENSE; do
   [ -s "$APP/Contents/Resources/$f" ] || { echo "The app is missing Contents/Resources/$f" >&2; exit 1; }
 done
+fail() { echo "$*" >&2; exit 1; }
+
+echo "==> Checking the built app"
 for BIN in "$APP/Contents/MacOS/UploadTheFile" "$APP/Contents/Resources/uptf"; do
-  echo "    $(basename "$BIN"): $(lipo -archs "$BIN")"
+  ARCHS="$(lipo -archs "$BIN")"
+  echo "    $(basename "$BIN"): $ARCHS"
+  case " $ARCHS " in *" arm64 "*) ;; *) fail "$(basename "$BIN") has no Apple silicon (arm64) slice: $ARCHS" ;; esac
+  case " $ARCHS " in *" x86_64 "*) ;; *) fail "$(basename "$BIN") has no Intel (x86_64) slice: $ARCHS" ;; esac
 done
+codesign --verify --strict --deep --verbose=2 "$APP"
+codesign --verify --strict --verbose=2 "$APP/Contents/Resources/uptf"
+for SIGNED in "$APP" "$APP/Contents/Resources/uptf"; do
+  # No exceptions to the hardened runtime, and the hardened runtime itself is on.
+  ENTITLEMENTS_OUT="$(codesign -d --entitlements :- "$SIGNED" 2>/dev/null || true)"
+  case "$ENTITLEMENTS_OUT" in
+    *"<key>"*) fail "$(basename "$SIGNED") is signed with entitlements; they must be empty" ;;
+  esac
+  codesign -d --verbose=2 "$SIGNED" 2>&1 | grep -q 'flags=.*runtime' ||
+    fail "$(basename "$SIGNED") is not signed with the hardened runtime"
+done
+BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
+[ "$BUNDLE_VERSION" = "$VERSION" ] || fail "The app's version is $BUNDLE_VERSION but VERSION says $VERSION"
+CLI_VERSION="$("$APP/Contents/Resources/uptf" --version)"
+[ "$CLI_VERSION" = "$VERSION" ] || fail "The embedded uptf reports version $CLI_VERSION but VERSION says $VERSION"
+# Debug-only snapshot code must not be in the release binary.
+if strings "$APP/Contents/MacOS/UploadTheFile" | grep -q render-snapshots; then
+  fail "render-snapshots found in the release binary"
+fi
 
 echo "==> Notarizing the app"
 rm -rf "$OUT"

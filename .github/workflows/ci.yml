@@ -23,7 +23,8 @@ jobs:
       - name: Build
         run: swift build
       # With Xcode installed (as on GitHub's macOS runners) plain `swift test` runs the
-      # Swift Testing suites; scripts/test.sh falls back to it there.
+      # Swift Testing suites; scripts/test.sh falls back to it there. It fails when the run
+      # reports no tests or fewer than scripts/min-test-count.
       - name: Test
         run: scripts/test.sh
       - name: Release build (ad-hoc signed app)

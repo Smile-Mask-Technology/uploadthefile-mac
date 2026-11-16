@@ -44,6 +44,10 @@ Tools, `swift test` builds the tests but runs none and still exits 0, so the scr
 bundle through `scripts/run-tests.swift` and returns the real result. CI runs the same script on
 GitHub's macOS runners.
 
+The script also fails when the run reports no tests, or fewer than the number in
+`scripts/min-test-count` (checked when no filter arguments are given), so a test target that stops
+running cannot leave a green result. Raise that number when you add tests.
+
 `scripts/snapshots.sh` renders every screen of the app, light and dark, to `build/snapshots/` (a
 DEBUG-only mode; release builds do not contain it). The images in `docs/images` come from there.
 
@@ -114,8 +118,10 @@ uptf display <path-or-name> preview|preview_download|download
 uptf delete <path-or-name> [--yes]
 ```
 
-Exit status: `1` failure, `2` bad arguments, `3` not signed in, `4` refused by the plan, `5` too
-many changes in a short time. A DMG install has the tool at
+Exit status: `0` done, `1` failure (also a question answered No), `2` a date for `expiry` that
+isn't valid, `3` not signed in, `4` refused by the plan, `5` too many changes in a short time, `64`
+the command line wasn't understood (a missing or unknown argument or option; ArgumentParser's own
+status), `130` stopped while running. A DMG install has the tool at
 `/Applications/Upload the File.app/Contents/Resources/uptf`.
 
 ## Library
