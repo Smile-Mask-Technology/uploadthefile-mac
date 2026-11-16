@@ -8,8 +8,16 @@ import UptfKit
 public enum PublishIntent: Sendable, Equatable {
     /// A file or folder the user chose. It may turn out to be published already.
     case publish
-    /// Replace the content behind the file's existing link.
-    case updateLink
+    /// Replace the content behind one existing link: the page of the row that was clicked, by
+    /// the id of its index entry. The file's path is not used to find the page, because two
+    /// entries can lead to the same path.
+    case updateLink(entryID: String)
+
+    /// The entry a replace is meant for; nil for a new publish.
+    public var updatedEntryID: String? {
+        if case .updateLink(let entryID) = self { return entryID }
+        return nil
+    }
 }
 
 /// The exact list a folder upload contains, for the confirmation.
@@ -166,7 +174,9 @@ public enum PublishAssessment: Equatable, Sendable {
 /// Looks at a file or folder and decides what happens next: refuse it, ask first, or upload.
 public struct PublishAssessor: Sendable {
     public typealias Prepare = @Sendable (_ url: URL, _ allowSensitive: Bool) throws -> PublishPlan
-    public typealias Lookup = @Sendable (_ url: URL) async throws -> ExistingPublication?
+    /// Finds the existing link for `url`. With an `entryID` (a replace from a row) it is that
+    /// entry's link, whatever path the index has for it; without one, the entry recorded for the path.
+    public typealias Lookup = @Sendable (_ url: URL, _ entryID: String?) async throws -> ExistingPublication?
 
     private let prepare: Prepare
     private let lookup: Lookup
@@ -182,13 +192,20 @@ public struct PublishAssessor: Sendable {
     }
 
     /// The real wiring: `Publisher.prepare`, and the existing link found in the index (which costs
-    /// at most one cached list read when something is recorded for the path).
+    /// at most one cached list read when something is recorded for the path or entry).
     public init(publisher: Publisher) {
         self.init(
             prepare: { url, allow in try publisher.prepare(url, allowSensitive: allow) },
-            lookup: { url in
-                guard let found = try await publisher.existingPublication(for: url) else { return nil }
-                let changed = (try? await publisher.index.changedSincePublish(url)) ?? true
+            lookup: { url, entryID in
+                let found: (entry: PublishedEntry, page: PageInfo)?
+                if let entryID {
+                    guard let entry = try await publisher.index.entry(forID: entryID) else { return nil }
+                    found = try await publisher.existingPublication(for: entry)
+                } else {
+                    found = try await publisher.existingPublication(for: url)
+                }
+                guard let found else { return nil }
+                let changed = (try? await publisher.index.changedSincePublish(url, entry: found.entry)) ?? true
                 return ExistingPublication(entry: found.entry, pageURL: found.page.url, changed: changed)
             })
     }
@@ -204,11 +221,12 @@ public struct PublishAssessor: Sendable {
 
         let existing: ExistingPublication?
         do {
-            existing = try await lookup(url)
+            existing = try await lookup(url, intent.updatedEntryID)
         } catch {
             return .refused(UserMessage.text(for: error))
         }
-        if intent == .updateLink && existing == nil {
+        let isUpdate = intent.updatedEntryID != nil
+        if isUpdate && existing == nil {
             return .refused(
                 "The link for “\(url.lastPathComponent)” isn't in your account anymore, so there is nothing to replace. Get a new link for it instead.")
         }
@@ -219,9 +237,9 @@ public struct PublishAssessor: Sendable {
             folder = FolderListing(
                 folderName: url.lastPathComponent, entries: plan.entries, servedAsWebsite: plan.hasRootIndexHtml)
         }
-        let alreadyPublished = intent == .publish && existing != nil
+        let alreadyPublished = !isUpdate && existing != nil
         if warnings.isEmpty && folder == nil && !alreadyPublished {
-            return .upload(UploadRequest(plan: plan, update: intent == .updateLink ? existing?.entry : nil))
+            return .upload(UploadRequest(plan: plan, update: isUpdate ? existing?.entry : nil))
         }
         return .confirm(
             PublishConfirmation(

@@ -201,9 +201,9 @@ final class AppModel {
         if rows.isEmpty { listState = .loading }
         do {
             let pages = try await backend.client.pages()
-            // Keep the local history in step with the website (renames, deleted pages), but only
-            // with a complete list.
-            if pages.count < UptfClient.listLimit { _ = try? await backend.index.reconcile(with: pages) }
+            // Keep the local history in step with the website (renames). Entries for pages that
+            // are not in this list stay: they may belong to another account.
+            _ = try? await backend.index.reconcile(with: pages)
             rows = await Self.makeRows(pages: pages, index: backend.index)
             loadedAt = Date()
             listState = .loaded
@@ -221,7 +221,7 @@ final class AppModel {
                 states[entry.id] = (.missing, nil)
                 continue
             }
-            let changed = (try? await index.changedSincePublish(url)) ?? false
+            let changed = (try? await index.changedSincePublish(url, entry: entry)) ?? false
             states[entry.id] = (changed ? .changed : .unchanged, url)
         }
         return PageRows.make(pages: pages, entries: entries) { states[$0.id] ?? (.missing, nil) }
@@ -264,14 +264,14 @@ final class AppModel {
 
     func updateLink(_ row: PageRow) {
         guard let url = row.localURL else { return }
-        publish([url], intent: .updateLink, origin: .menu)
+        publish([url], intent: .updateLink(entryID: row.id), origin: .menu)
     }
 
     /// Asks first, then deletes the file and its link.
     func delete(_ row: PageRow) async -> Bool {
         guard let backend, askKeepingStatusOpen({ Alerts.confirmDelete(name: row.title) }) else { return false }
         do {
-            try await backend.client.unpublish(row.page.slug)
+            try await backend.client.unpublish(row.page.id)
             try? await backend.index.remove(id: row.id)
             rows.removeAll { $0.id == row.id }
             return true

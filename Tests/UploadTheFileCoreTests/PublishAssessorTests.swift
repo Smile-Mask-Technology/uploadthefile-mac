@@ -149,17 +149,61 @@ struct PublishAssessorTests {
             let file = try writeFile("report.pdf", in: root)
             let entry = try makeEntry(path: file.path)
             let existing = ExistingPublication(entry: entry, pageURL: entry.url, changed: true)
-            let verdict = await makeAssessor(home: root, existing: { _ in existing }).assess(file, intent: .updateLink)
+            let verdict = await makeAssessor(home: root, existing: { _ in existing }).assess(file, intent: .updateLink(entryID: "page-1"))
             guard case .upload(let request) = verdict else { Issue.record("expected upload, got \(verdict)"); return }
             #expect(request.update == entry)
             #expect(request.plan.kind == .file)
         }
     }
 
+    @Test func updateLinkAsksForTheEntryOfTheRowNotTheFilePath() async throws {
+        try await withTempDirectory { root in
+            let file = try writeFile("report.pdf", in: root)
+            let rowEntry = try makeEntry(id: "page-1", path: root.appendingPathComponent("gone.pdf").path)
+            let pathEntry = try makeEntry(id: "page-2", path: file.path)
+            // Like the real lookup: with an entry id the entry of that id answers, otherwise the
+            // entry recorded for the path does.
+            let assessor = PublishAssessor(
+                prepare: { url, allow in try makePlan(for: url, home: root) },
+                lookup: { _, entryID in
+                    let entry = entryID == "page-1" ? rowEntry : pathEntry
+                    return ExistingPublication(entry: entry, pageURL: entry.url, changed: true)
+                },
+                home: root)
+
+            let replace = await assessor.assess(file, intent: .updateLink(entryID: "page-1"))
+            guard case .upload(let request) = replace else { Issue.record("expected upload, got \(replace)"); return }
+            #expect(request.update?.id == "page-1")
+
+            // A plain publish of the same path still finds the entry recorded for it.
+            let publish = await assessor.assess(file, intent: .publish)
+            guard case .confirm(let confirmation) = publish else { Issue.record("expected confirm, got \(publish)"); return }
+            #expect(confirmation.existing?.entry.id == "page-2")
+        }
+    }
+
+    @Test func aNewPublishDoesNotNameAnEntry() async throws {
+        try await withTempDirectory { root in
+            let file = try writeFile("report.pdf", in: root)
+            let seen = IDBox()
+            let assessor = PublishAssessor(
+                prepare: { url, allow in try makePlan(for: url, home: root) },
+                lookup: { _, entryID in
+                    seen.value = entryID
+                    return nil
+                },
+                home: root)
+            _ = await assessor.assess(file, intent: .publish)
+            #expect(seen.value == nil)
+            #expect(PublishIntent.publish.updatedEntryID == nil)
+            #expect(PublishIntent.updateLink(entryID: "page-1").updatedEntryID == "page-1")
+        }
+    }
+
     @Test func updateLinkForAPageThatIsGoneIsRefused() async throws {
         try await withTempDirectory { root in
             let file = try writeFile("report.pdf", in: root)
-            let verdict = await makeAssessor(home: root).assess(file, intent: .updateLink)
+            let verdict = await makeAssessor(home: root).assess(file, intent: .updateLink(entryID: "page-1"))
             guard case .refused(let message) = verdict else { Issue.record("expected refusal"); return }
             #expect(message.contains("isn't in your account anymore"))
         }
@@ -171,7 +215,7 @@ struct PublishAssessorTests {
             try writeFile("site/index.html", in: root)
             let entry = try makeEntry(path: site.path, hostedAsSite: true)
             let existing = ExistingPublication(entry: entry, pageURL: entry.url, changed: true)
-            let verdict = await makeAssessor(home: root, existing: { _ in existing }).assess(site, intent: .updateLink)
+            let verdict = await makeAssessor(home: root, existing: { _ in existing }).assess(site, intent: .updateLink(entryID: "page-1"))
             guard case .confirm(let confirmation) = verdict else { Issue.record("expected confirm"); return }
             #expect(confirmation.options.map(\.choice) == [.updateExisting])
             #expect(confirmation.title == "Replace “site” and keep the same link?")
@@ -187,4 +231,9 @@ struct PublishAssessorTests {
             #expect(verdict == .refused("Too many changes in a short time. Try again in 3 minutes."))
         }
     }
+}
+
+/// Holds what a `@Sendable` test closure saw.
+private final class IDBox: @unchecked Sendable {
+    var value: String?
 }

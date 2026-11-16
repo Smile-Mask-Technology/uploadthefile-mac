@@ -34,8 +34,9 @@ public struct PublishOutcome: Sendable, Equatable {
 /// Publishes files and folders and keeps the local ``PublishedIndex`` in step.
 ///
 /// Reads are scarce on free accounts (20 per hour), so the flows here use as few as they can:
-/// publishing costs one write plus one read (the upload result has no page id), and updating
-/// costs one list read to find the page by id, which also notices renames done on the website.
+/// publishing costs one write (plus one read only when the server's answer carries no page id),
+/// and updating costs one list read to find the page by id, which also notices renames done on
+/// the website.
 public struct Publisher: Sendable {
     public let client: UptfClient
     public let index: PublishedIndex
@@ -68,22 +69,37 @@ public struct Publisher: Sendable {
     }
 
     /// The server's current page for a recorded entry, found by its immutable id. The index is
-    /// brought up to date (a rename on the website shows up as a new name), and an entry whose
-    /// page is gone is dropped. Uses the client's cached list, so it is one read at most.
+    /// brought up to date (a rename on the website shows up as a new name). Uses the client's
+    /// cached list; a page that is not in it is asked for by id (one more read). An entry is
+    /// dropped only when the server answers that the page does not exist: a page missing from
+    /// the list may be another account's, or past the end of a long list.
     public func livePage(for entry: PublishedEntry) async throws -> PageInfo? {
         let pages = try await client.pages()
-        guard let page = pages.first(where: { $0.id == entry.id }) else {
-            // Only trust a complete list: a full one may simply have cut this page off.
-            if pages.count < UptfClient.listLimit { try? await index.remove(id: entry.id) }
+        if let page = pages.first(where: { $0.id == entry.id }) {
+            try? await index.apply(page)
+            return page
+        }
+        do {
+            let page = try await client.page(entry.id)
+            try? await index.apply(page)
+            return page
+        } catch UptfError.server(404, _) {
+            // Not in this account: deleted on the website, or published while signed in to
+            // another account. The entry stays, so signing back in to that account keeps the
+            // link; only an explicit delete removes an entry.
             return nil
         }
-        try? await index.apply(page)
-        return page
     }
 
     /// The recorded entry for `url` and its page, if both still exist.
     public func existingPublication(for url: URL) async throws -> (entry: PublishedEntry, page: PageInfo)? {
         guard let entry = try await index.entry(for: url) else { return nil }
+        return try await existingPublication(for: entry)
+    }
+
+    /// `entry` and its page, if the page still exists. The entry is the one the caller means;
+    /// nothing is looked up by file path.
+    public func existingPublication(for entry: PublishedEntry) async throws -> (entry: PublishedEntry, page: PageInfo)? {
         guard let page = try await livePage(for: entry) else { return nil }
         return (entry, page)
     }
@@ -92,11 +108,17 @@ public struct Publisher: Sendable {
     public func publish(_ plan: PublishPlan, name: String? = nil, hostAsSite: Bool = false) async throws -> PublishOutcome {
         try await withUpload(plan) { upload in
             let result = try await client.publish(upload, name: name, hostAsSite: hostAsSite)
-            // The upload result has no page id. The client just cleared its cache, so this is one
-            // `GET /pages/{slug}`. If it fails the page is live anyway; only the history is missing.
+            if let id = result.id {
+                // The slug is the name, or the id when the page has no name.
+                return await finish(
+                    plan, result: result, id: id, name: result.slug == id ? nil : result.slug, hostAsSite: hostAsSite)
+            }
+            // A server that does not send the page id: read the page. The client just cleared
+            // its cache, so this is one `GET /pages/{slug}`. If it fails the page is live
+            // anyway; only the history is missing.
             do {
                 let page = try await client.page(result.slug)
-                return await finish(plan, result: result, page: page, hostAsSite: hostAsSite)
+                return await finish(plan, result: result, id: page.id, name: page.name, hostAsSite: hostAsSite)
             } catch {
                 return PublishOutcome(
                     result: result, entry: nil,
@@ -106,22 +128,24 @@ public struct Publisher: Sendable {
     }
 
     /// Re-uploads the plan to the page recorded in `entry`; the URL stays the same. The page is
-    /// found by id, so it works even after the page was renamed on the website.
+    /// found, and replaced, by id, so it works even after the page was renamed on the website.
     public func update(_ plan: PublishPlan, entry: PublishedEntry) async throws -> PublishOutcome {
         guard let page = try await livePage(for: entry) else {
             throw UptfError.unexpected(
                 "The link \(entry.url) isn't in your account anymore, so there is nothing to replace. Get a new link for it instead.")
         }
         return try await withUpload(plan) { upload in
-            let result = try await client.replace(upload, slug: page.slug, hostAsSite: entry.hostedAsSite)
-            return await finish(plan, result: result, page: page, hostAsSite: entry.hostedAsSite)
+            let result = try await client.replace(upload, page: page, hostAsSite: entry.hostedAsSite)
+            return await finish(plan, result: result, id: page.id, name: page.name, hostAsSite: entry.hostedAsSite)
         }
     }
 
-    private func finish(_ plan: PublishPlan, result: PublishResult, page: PageInfo, hostAsSite: Bool) async -> PublishOutcome {
+    private func finish(
+        _ plan: PublishPlan, result: PublishResult, id: String, name: String?, hostAsSite: Bool
+    ) async -> PublishOutcome {
         do {
             let entry = try await index.record(
-                fileURL: plan.url, id: page.id, name: page.name, url: result.url, kind: plan.kind,
+                fileURL: plan.url, id: id, name: name, url: result.url, kind: plan.kind,
                 hostedAsSite: hostAsSite,
                 sha256: Fingerprint.sha256(of: plan.url, includeHidden: plan.includeHidden))
             return PublishOutcome(result: result, entry: entry, historyError: nil)

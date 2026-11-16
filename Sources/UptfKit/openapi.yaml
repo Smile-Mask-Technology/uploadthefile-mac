@@ -2103,13 +2103,18 @@ components:
       type: object
       required: [file]
       description: |
-        Like the create form, but one of `name` / `subdomain` / `domain` is
+        Like the create form, but `id`, or one of `name` / `subdomain` / `domain`, is
         **required** and must identify an existing page you own.
       properties:
         file:
           type: string
           format: binary
           description: The replacement `.html` file or `.zip` static site.
+        id:
+          type: string
+          description: >-
+            The page to replace, by id. When set, the page is found by id and name is not used
+            to find it.
         name:
           $ref: '#/components/schemas/SubdomainName'
         subdomain:
@@ -2790,6 +2795,9 @@ components:
       type: object
       required: [url, slug, hasHtml]
       properties:
+        id:
+          type: string
+          description: The page's id, which stays the same when the page is renamed.
         url:
           type: string
           format: uri

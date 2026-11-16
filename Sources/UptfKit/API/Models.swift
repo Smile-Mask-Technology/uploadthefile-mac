@@ -66,4 +66,6 @@ public struct PublishResult: Codable, Sendable, Equatable {
     public var slug: String
     /// Whether the page/site has an `index.html`.
     public var hasHtml: Bool
+    /// The page's id. Nil when the server's answer does not carry one (an older server).
+    public var id: String?
 }

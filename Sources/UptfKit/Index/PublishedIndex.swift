@@ -155,10 +155,17 @@ public actor PublishedIndex {
     }
 
     /// True when `fileURL` has never been published or its contents differ from the last publish.
+    /// The entry is found by the file's path, then its bookmark.
     public func changedSincePublish(_ fileURL: URL) throws -> Bool {
         guard let entry = try entry(for: fileURL) else { return true }
-        let current = try Fingerprint.sha256(of: fileURL)
-        return current != entry.sha256
+        return try changedSincePublish(fileURL, entry: entry)
+    }
+
+    /// True when `fileURL`'s contents differ from what was uploaded for `entry`. The entry is
+    /// taken as given, not looked up again by path, so it can't be mixed up with the entry of
+    /// another page that was recorded at the same path.
+    public func changedSincePublish(_ fileURL: URL, entry: PublishedEntry) throws -> Bool {
+        try Fingerprint.sha256(of: fileURL) != entry.sha256
     }
 
     /// Where the entry's file is now, following its bookmark if the recorded path is gone.
@@ -207,33 +214,23 @@ public actor PublishedIndex {
         try save(file)
     }
 
-    /// Matches entries to the server's list by page id: names and URLs are refreshed (so a rename
-    /// on the website keeps the link), and entries whose id is gone are dropped.
-    /// Only call this with a complete list. Returns the entries that were dropped.
-    @discardableResult
-    public func reconcile(with pages: [PageInfo]) throws -> [PublishedEntry] {
+    /// Takes the current name and URL of every recorded page that is in the server's list, matched
+    /// by page id, so a rename on the website keeps the link. Entries that are not in the list
+    /// stay as they are: the list may belong to another account, or have been cut short, and
+    /// the local record of which file is which link can't be rebuilt once it is gone.
+    /// Entries leave the index only through ``remove(id:)``.
+    public func reconcile(with pages: [PageInfo]) throws {
         let live = Dictionary(pages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var file = try load()
-        var dropped: [PublishedEntry] = []
-        var kept: [PublishedEntry] = []
-        for var entry in file.entries {
-            guard entry.origin == origin else {
-                kept.append(entry)
-                continue
-            }
-            if let page = live[entry.id] {
-                entry.name = page.name
-                entry.url = page.url
-                kept.append(entry)
-            } else {
-                dropped.append(entry)
-            }
+        var changed = false
+        for position in file.entries.indices where file.entries[position].origin == origin {
+            guard let page = live[file.entries[position].id] else { continue }
+            guard file.entries[position].name != page.name || file.entries[position].url != page.url else { continue }
+            file.entries[position].name = page.name
+            file.entries[position].url = page.url
+            changed = true
         }
-        if kept != file.entries {
-            file.entries = kept
-            try save(file)
-        }
-        return dropped
+        if changed { try save(file) }
     }
 
     // MARK: Storage

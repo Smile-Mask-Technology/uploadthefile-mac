@@ -95,31 +95,51 @@ struct IndexTests {
         }
     }
 
-    @Test func reconcileFollowsRenamesByIdAndDropsDeletedPages() async throws {
+    @Test func reconcileFollowsRenamesByIdAndKeepsEntriesMissingFromTheList() async throws {
         try await withTempDirectory { directory in
             let kept = try writeFile("kept.html", in: directory)
-            let gone = try writeFile("gone.html", in: directory)
+            let absent = try writeFile("absent.html", in: directory)
             let index = PublishedIndex(fileURL: directory.appendingPathComponent("i.json"), origin: origin)
             try await index.record(fileURL: kept, id: "p1", name: "old-name", url: "https://old-name.upload.tf", kind: .file)
-            try await index.record(fileURL: gone, id: "p2", name: "gone", url: "https://gone.upload.tf", kind: .file)
+            try await index.record(fileURL: absent, id: "p2", name: "absent", url: "https://absent.upload.tf", kind: .file)
 
-            // The page p1 was renamed on the website; p2 was deleted there; p3 is somebody else's concern.
-            let dropped = try await index.reconcile(with: [
+            // The page p1 was renamed on the website. p2 is not in this list: it may be another
+            // account's page, or the list may have been cut short.
+            try await index.reconcile(with: [
                 makePage(id: "p1", name: "new-name", url: "https://new-name.upload.tf"),
                 makePage(id: "p3", name: "unrelated"),
             ])
 
-            #expect(dropped.map(\.id) == ["p2"])
             let entries = try await index.entries()
-            #expect(entries.map(\.id) == ["p1"])
-            #expect(entries[0].name == "new-name")
-            #expect(entries[0].slug == "new-name")
-            #expect(entries[0].url == "https://new-name.upload.tf")
+            #expect(entries.map(\.id).sorted() == ["p1", "p2"])
+            let renamed = try #require(try await index.entry(forID: "p1"))
+            #expect(renamed.name == "new-name")
+            #expect(renamed.slug == "new-name")
+            #expect(renamed.url == "https://new-name.upload.tf")
             // The local link survived the rename.
             #expect(try await index.entry(for: kept)?.id == "p1")
             #expect(try await index.entry(matching: "new-name")?.id == "p1")
             #expect(try await index.entry(matching: "old-name") == nil)
-            #expect(try await index.entry(for: gone) == nil)
+            // The entry that was not in the list is untouched, path and bookmark included.
+            let untouched = try #require(try await index.entry(forID: "p2"))
+            #expect(untouched.name == "absent")
+            #expect(untouched.lastKnownPath == absent.path)
+            #expect(untouched.bookmark != nil)
+            #expect(try await index.entry(for: absent)?.id == "p2")
+        }
+    }
+
+    @Test func anEmptyListDoesNotForgetAnything() async throws {
+        try await withTempDirectory { directory in
+            let file = try writeFile("a.html", in: directory)
+            let index = PublishedIndex(fileURL: directory.appendingPathComponent("i.json"), origin: origin)
+            let recorded = try await index.record(
+                fileURL: file, id: "p1", name: "a", url: "https://a.upload.tf", kind: .file,
+                publishedAt: Date(timeIntervalSince1970: 1_800_000_000))  // whole seconds: the file stores ISO 8601
+
+            try await index.reconcile(with: [])
+
+            #expect(try await index.entries() == [recorded])
         }
     }
 
@@ -132,10 +152,26 @@ struct IndexTests {
             try await production.record(fileURL: file, id: "p1", name: "a", url: "https://a.upload.tf", kind: .file)
             try await dev.record(fileURL: file, id: "p1", name: "a", url: "http://a.localhost:3000", kind: .file)
 
-            let dropped = try await production.reconcile(with: [])
-            #expect(dropped.count == 1)
-            #expect(try await production.entries().isEmpty)
-            #expect(try await dev.entries().count == 1)
+            // A list from production renames p1 there and leaves the dev entry for the same id alone.
+            try await production.reconcile(with: [makePage(id: "p1", name: "b", url: "https://b.upload.tf")])
+            #expect(try await production.entries().map(\.name) == ["b"])
+            #expect(try await dev.entries().map(\.name) == ["a"])
+            #expect(try await dev.entries().map(\.url) == ["http://a.localhost:3000"])
+        }
+    }
+
+    @Test func changeDetectionWithAnEntryDoesNotLookTheFileUpByPath() async throws {
+        try await withTempDirectory { directory in
+            let first = try writeFile("first.pdf", in: directory, contents: "first")
+            let second = try writeFile("second.pdf", in: directory, contents: "second")
+            let index = PublishedIndex(fileURL: directory.appendingPathComponent("i.json"), origin: origin)
+            let one = try await index.record(fileURL: first, id: "p1", name: "one", url: "https://one.upload.tf", kind: .file)
+            let two = try await index.record(fileURL: second, id: "p2", name: "two", url: "https://two.upload.tf", kind: .file)
+
+            // The path of `second` belongs to p2, but the question is about p1's entry.
+            #expect(try await index.changedSincePublish(second, entry: one) == true)
+            #expect(try await index.changedSincePublish(second, entry: two) == false)
+            #expect(try await index.changedSincePublish(first, entry: one) == false)
         }
     }
 
