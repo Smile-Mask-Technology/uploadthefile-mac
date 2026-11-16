@@ -9,6 +9,11 @@ cask "upload-the-file" do
   desc "Put files and folders online and get a link, from the menu bar or Finder"
   homepage "https://uploadthefile.com/"
 
+  # The app updates itself (Sparkle); `brew upgrade` leaves such casks to the app. Homebrew decides
+  # with the newest cask, so leave this line out of the cask for the first release that contains
+  # the updater and add it from the release after that (docs/RELEASING.md).
+  auto_updates true
+
   livecheck do
     url :url
     strategy :github_latest
@@ -23,6 +28,8 @@ cask "upload-the-file" do
 
   zap trash: [
     "~/Library/Application Support/UploadTheFile",
+    "~/Library/Caches/com.smilemasktechnology.uploadthefile",
+    "~/Library/HTTPStorages/com.smilemasktechnology.uploadthefile",
     "~/Library/Preferences/com.smilemasktechnology.uploadthefile.plist",
   ]
 end

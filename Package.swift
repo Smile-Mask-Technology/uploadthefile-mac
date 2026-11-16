@@ -37,6 +37,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.8.0"),
         .package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.6.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.1"),
     ],
     targets: [
         .target(
@@ -62,7 +63,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "UploadTheFile",
-            dependencies: ["UptfKit", "UploadTheFileCore"]
+            dependencies: [
+                "UptfKit", "UploadTheFileCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            // Sparkle.framework is copied to Contents/Frameworks by scripts/build-app.sh.
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
         .testTarget(
             name: "UploadTheFileCoreTests",

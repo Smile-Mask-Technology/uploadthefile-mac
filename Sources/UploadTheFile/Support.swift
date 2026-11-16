@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UploadTheFileCore
 import UserNotifications
 
 /// Notifications for finished links. Permission is asked once, on the first link,
@@ -27,7 +28,7 @@ enum Notifier {
         }
     }
 
-    static func post(title: String, body: String) async {
+    static func post(title: String, body: String, userInfo: [String: String] = [:]) async {
         guard isAvailable else { return }
         let status = await authorizationStatus()
         guard status == .authorized || status == .provisional else { return }
@@ -35,10 +36,15 @@ enum Notifier {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
+            content.userInfo = userInfo
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request) { _ in continuation.resume() }
         }
     }
+
+    /// What clicking an update notification does: the same check as the menu item. Set by the
+    /// updater; nil when there is none.
+    static var onCheckForUpdates: (@MainActor () -> Void)?
 
     /// The completion-handler APIs, so that only plain values (the status, nothing) cross the
     /// concurrency boundary. With the async APIs, Swift 6.1 (Xcode 16, GitHub's macos-15 runner)
@@ -59,6 +65,18 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner]
+    }
+
+    /// A click on the "update available" notification runs the update check. The completion
+    /// handler is called before anything else so that no non-Sendable value crosses into the Task.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let action = response.notification.request.content.userInfo[PendingUpdate.notificationActionKey] as? String
+        completionHandler()
+        guard action == PendingUpdate.notificationActionValue else { return }
+        Task { @MainActor in Notifier.onCheckForUpdates?() }
     }
 }
 

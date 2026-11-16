@@ -37,7 +37,7 @@ struct BundleResourceTests {
     @Test func thirdPartyNoticesCoverTheLinkedPackages() throws {
         let notices = try String(contentsOf: Self.root.appendingPathComponent("THIRD_PARTY_NOTICES.txt"), encoding: .utf8)
         let linked = ["swift-openapi-runtime", "swift-openapi-urlsession", "swift-http-types",
-                      "swift-collections", "swift-argument-parser"]
+                      "swift-collections", "swift-argument-parser", "Sparkle"]
         for name in linked {
             #expect(notices.contains("\n\(name) "), "THIRD_PARTY_NOTICES.txt lacks \(name): run scripts/make-notices.sh")
         }

@@ -42,6 +42,7 @@ When the website's wording changes, change this page and the strings together.
 | Nothing went out | "Nothing was published." |
 | Empty list | "Nothing published yet" and "Files and folders you publish appear here." |
 | Tip | "Drop files on the menu bar icon, or right-click a file in Finder." |
+| Updates | **Check for Updates…**; with a new version waiting, **Update to 0.1.3…**; notification "Update available" / "Upload the File 0.1.3 is available." (Sparkle's own window keeps its wording) |
 | Finder, nothing to copy | "Not published yet" ("“X” isn't published from this Mac yet. Choose “Publish with Upload the File” first.") |
 | Link in a list row | The link itself, e.g. `launch-notes.upload.tf`, opens in the browser; the rest of the row and the copy icon copy it ("Copy Link", then "Link copied") |
 | Dashboard | **Manage Files on uploadthefile.com** |
