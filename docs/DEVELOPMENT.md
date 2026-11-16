@@ -59,6 +59,31 @@ Developer ID, has Apple notarize the app and the DMG, and writes `build/release/
 and the update feed `build/release/appcast.xml`.
 The asset name never changes, so `releases/latest/download/UploadTheFile.dmg` is always the newest.
 
+## The disk image window
+
+`scripts/make-dmg.sh "build/Upload the File.app" build/test.dmg` builds the disk image people open
+to install the app: a 600 x 380 point window, no toolbar, status bar or sidebar, with
+`Upload the File.app` on the left, an arrow, and an `Applications` link on the right, over a light
+background. Nothing else is in it: the licences ship inside the app
+(`Contents/Resources/LICENSE`, `THIRD_PARTY_NOTICES.txt`).
+
+- The image is written by [dmgbuild](https://dmgbuild.readthedocs.io), pinned with hashes in
+  `scripts/requirements-dmg.txt` and installed into `.build/dmg-venv` (made from Python 3.11 or
+  newer: `/opt/homebrew/bin/python3`, else `python3`). The packages are installed again only when
+  that file changes. The window layout (size, icon size and positions, hidden toolbar, format) is
+  `scripts/dmg-settings.py`.
+- The background is `Resources/DMG/background.png` (1x) and `background@2x.png` (2x, 144 dpi), drawn
+  by `swift scripts/make-dmg-background.swift`; both are committed. Finder draws icon labels in
+  black over a background picture, in Dark Mode too, so the picture has to stay light (a test
+  checks it). When you change the picture, rerun the script and commit the two files.
+- `swift scripts/make-dmg-preview.swift` writes `build/dmg-preview.png`: the 2x background with the
+  app icon and the Applications folder drawn at the positions in `scripts/dmg-settings.py`, with
+  their labels in black. It is a way to review the layout without mounting the image or opening Finder.
+- To check an image without opening a window: `hdiutil attach -nobrowse -readonly -mountpoint
+  build/dmg-mnt build/test.dmg`, `ls -la build/dmg-mnt` (the visible items are the app and
+  `Applications`; `.background.tiff`, `.DS_Store` and `.VolumeIcon.icns` are hidden files),
+  `hdiutil detach build/dmg-mnt`.
+
 ## Updates
 
 The app updates itself with [Sparkle 2](https://sparkle-project.org). `Sparkle.framework` comes from
