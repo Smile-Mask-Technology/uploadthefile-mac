@@ -90,6 +90,7 @@ uptf delete report                  # delete the file and its link
   account; a password, asking for an email and longer-lasting links come with the paid plans
   ([see plans](https://uploadthefile.com/pricing)).
 - **How big can a file be?** Up to 50 MB from the app. For bigger files, use the website.
+- **How do I update?** The app checks once a day and offers new versions; **Check for Updates…** in the menu.
 - **The Finder entry doesn't show.** Right-click a file and look under **Quick Actions** or
   **Services**. If it's missing, open System Settings ▸ Keyboard ▸ Keyboard Shortcuts ▸ Services
   and tick **Publish with Upload the File**. You can give it a keyboard shortcut there too.

@@ -9,6 +9,9 @@ cask "upload-the-file" do
   desc "Put files and folders online and get a link, from the menu bar or Finder"
   homepage "https://uploadthefile.com/"
 
+  # The app updates itself (Sparkle); `brew upgrade` leaves such casks to the app.
+  auto_updates true
+
   livecheck do
     url :url
     strategy :github_latest

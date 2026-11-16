@@ -20,7 +20,8 @@ UNIVERSAL=1 scripts/build-app.sh      # Apple silicon + Intel
 ```
 
 The bundle holds the app (`Contents/MacOS/UploadTheFile`), the CLI (`Contents/Resources/uptf`),
-the menu bar icons (`Contents/Resources/MenuBarIcons`, template PDFs) and the logo
+Sparkle (`Contents/Frameworks/Sparkle.framework`, see Updates below), the menu bar icons
+(`Contents/Resources/MenuBarIcons`, template PDFs) and the logo
 (`Contents/Resources/BrandMark.pdf`). The icons and the app icon are generated from the website's
 logo geometry by `scripts/make-menubar-icons.swift` (see `Resources/MenuBarIcons/README.md`).
 
@@ -54,8 +55,37 @@ DEBUG-only mode; release builds do not contain it). The images in `docs/images` 
 ## Releases
 
 See [RELEASING.md](RELEASING.md): `scripts/release.sh` builds the universal app, signs it with the
-Developer ID, has Apple notarize the app and the DMG, and writes `build/release/UploadTheFile.dmg`.
+Developer ID, has Apple notarize the app and the DMG, and writes `build/release/UploadTheFile.dmg`
+and the update feed `build/release/appcast.xml`.
 The asset name never changes, so `releases/latest/download/UploadTheFile.dmg` is always the newest.
+
+## Updates
+
+The app updates itself with [Sparkle 2](https://sparkle-project.org). `Sparkle.framework` comes from
+the package's binary artifact (`.build/artifacts/sparkle/Sparkle`); `scripts/build-app.sh` copies it
+to `Contents/Frameworks` with `ditto` (the symlinks inside must survive), deletes its XPC services
+(they are only for sandboxed apps) and signs it inside out: the `Autoupdate` helper, `Updater.app`,
+the framework, then the app, never with `--deep`. A Developer ID build keeps the hardened runtime. An
+ad-hoc build has no hardened runtime: library validation, part of it, refuses a framework that has no
+team in its signature.
+
+- **Feed.** `SUFeedURL` in `Resources/Info.plist` is
+  `https://github.com/Smile-Mask-Technology/uploadthefile-mac/releases/latest/download/appcast.xml`:
+  the appcast attached to the newest GitHub release. `scripts/make-appcast.sh` writes it (one item:
+  version, build, minimum macOS, DMG address, EdDSA signature, release notes).
+- **Key.** `SUPublicEDKey` is the public half of the update signing key. An update that is not signed
+  by the matching private key is refused, whatever the feed says.
+- **When.** `SUEnableAutomaticChecks` is on, so the first check needs no question; Sparkle then
+  checks about every 24 hours and offers the new version in its own window. The app is a menu bar
+  app, so `AppUpdates` (`Sources/UploadTheFile/Updates.swift`) declares gentle-reminder support and
+  brings the app to the front when Sparkle shows an alert. **Check for Updates…** is in the
+  right-click menu of the menu bar icon, and is disabled while a check runs.
+- **What is sent.** Sparkle's request for the feed carries the app's name and version in the
+  `User-Agent`, and no other information about the Mac (`SUEnableSystemProfiling` is off).
+- **Not in snapshots.** `AppUpdates` is created when the app finishes launching; the
+  `--render-snapshots` mode exits before the app starts, so it never starts the updater or opens a
+  connection. A binary that is not inside an `.app` with a feed (for example `swift run`) does not
+  start it either.
 
 ## How it works
 
@@ -93,7 +123,7 @@ certificates are left out, and the exact list is shown first. Paths such as `~/.
 `~/Library/Keychains`, `~/.gnupg` and `~/.aws` need an explicit confirmation (the CLI refuses them).
 Files over 50 MB are refused before uploading.
 
-**Sandbox.** The app runs with the hardened runtime, without exceptions, and without the App
+**Sandbox.** The release app runs with the hardened runtime, without exceptions, and without the App
 Sandbox: it runs `/usr/bin/zip` on paths the user picks anywhere on disk and shares its Keychain
 item and index with the CLI. The entitlements file is empty on purpose (it must stay free of XML
 comments; the system's parser rejects them).
