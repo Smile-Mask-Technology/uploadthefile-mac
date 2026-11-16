@@ -9,6 +9,24 @@ struct BundleResourceTests {
     private static let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
+    /// Every shell script parses (`sh -n`): most of them only run at release time, so a syntax error
+    /// would otherwise surface in the middle of a release.
+    @Test func everyScriptParses() throws {
+        let scripts = try FileManager.default.contentsOfDirectory(atPath: Self.root.appendingPathComponent("scripts").path)
+            .filter { $0.hasSuffix(".sh") }
+        #expect(!scripts.isEmpty)
+        for name in scripts {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-n", Self.root.appendingPathComponent("scripts/\(name)").path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 0, "scripts/\(name) does not parse (sh -n)")
+        }
+    }
+
     private func infoPlist() throws -> [String: Any] {
         let data = try Data(contentsOf: Self.root.appendingPathComponent("Resources/Info.plist"))
         let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)

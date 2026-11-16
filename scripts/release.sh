@@ -28,7 +28,7 @@ cd "$(dirname "$0")/.."
 fail() { echo "$*" >&2; exit 1; }
 
 : "${SIGN_IDENTITY:?set SIGN_IDENTITY to a Developer ID Application identity}"
-: "${RELEASE_NOTES_HTML:?set RELEASE_NOTES_HTML to an HTML file with this release's notes}"
+: "${RELEASE_NOTES_HTML:?set RELEASE_NOTES_HTML to an HTML file with the notes for this release}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-uptf-notary}"
 VERSION="$(cat VERSION)"
 APP="build/Upload the File.app"
