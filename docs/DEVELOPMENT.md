@@ -73,15 +73,33 @@ team in its signature.
   `https://github.com/Smile-Mask-Technology/uploadthefile-mac/releases/latest/download/appcast.xml`:
   the appcast attached to the newest GitHub release. `scripts/make-appcast.sh` writes it (one item:
   version, build, minimum macOS, DMG address, EdDSA signature, release notes).
-- **Key.** `SUPublicEDKey` is the public half of the update signing key. An update that is not signed
-  by the matching private key is refused, whatever the feed says.
+- **Key.** `SUPublicEDKey` is the public half of the update signing key. Sparkle accepts an update
+  whose EdDSA signature matches that key, or one whose app carries the same Developer ID signature
+  as the installed app; it refuses anything else. `SURequireSignedFeed` makes the feed itself
+  signed (`scripts/release.sh` signs `appcast.xml`; see RELEASING.md), and
+  `SUVerifyUpdateBeforeExtraction` makes Sparkle check the DMG's signature before it opens it.
 - **When.** `SUEnableAutomaticChecks` is on, so the first check needs no question; Sparkle then
-  checks about every 24 hours and offers the new version in its own window. The app is a menu bar
-  app, so `AppUpdates` (`Sources/UploadTheFile/Updates.swift`) declares gentle-reminder support and
-  brings the app to the front when Sparkle shows an alert. **Check for Updates…** is in the
-  right-click menu of the menu bar icon, and is disabled while a check runs.
-- **What is sent.** Sparkle's request for the feed carries the app's name and version in the
-  `User-Agent`, and no other information about the Mac (`SUEnableSystemProfiling` is off).
+  checks about every 24 hours. The app is a menu bar app with no Dock icon, and a window that
+  came to the front on its own would take the keyboard focus from whatever the person is doing, so
+  `AppUpdates` (`Sources/UploadTheFile/Updates.swift`) lets Sparkle show a scheduled update only
+  right after launch. Later, the update is announced by one notification ("Upload the File 0.1.3
+  is available.") and the menu item reads **Update to 0.1.3…** until the update session ends;
+  clicking either brings Sparkle's window forward. A check the person asks for (**Check for
+  Updates…**, in the right-click menu of the menu bar icon, disabled while a check runs) is
+  brought to the front by Sparkle. **Install and Relaunch** while a publish or replace is running
+  waits until it has finished (`RelaunchHold` in `UploadTheFileCore`). The notification needs the
+  permission the app asks for with the first link; without it only the menu item shows the update.
+- **Feed pinned.** `AppUpdates` answers `feedURLString(for:)` with `SUFeedURL` from Info.plist, so
+  a `SUFeedURL` in the app's user defaults cannot point the updater elsewhere.
+- **What is sent.** Each check is an HTTPS request to GitHub, which sees the IP address (the
+  request is redirected to GitHub's release-assets host). Sparkle's request carries the app's name
+  and version and Sparkle's version in the `User-Agent` (`Upload the File/<version>
+  Sparkle/<version>`), plus the usual headers the system adds, and no other information about the
+  Mac (`SUEnableSystemProfiling` is off). To turn the checks off on a Mac:
+  `defaults write com.smilemasktechnology.uploadthefile SUEnableAutomaticChecks -bool NO`.
+- **Development builds.** An ad-hoc build (`scripts/build-app.sh` without `SIGN_IDENTITY`) has
+  `SUFeedURL` removed from its Info.plist, so it never checks the live feed; `AppUpdates` does not
+  start an updater without a feed (as with `swift run`).
 - **Not in snapshots.** `AppUpdates` is created when the app finishes launching; the
   `--render-snapshots` mode exits before the app starts, so it never starts the updater or opens a
   connection. A binary that is not inside an `.app` with a feed (for example `swift run`) does not
