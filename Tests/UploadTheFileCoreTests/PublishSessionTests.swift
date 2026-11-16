@@ -154,7 +154,7 @@ struct PublishSessionTests {
             let file = try writeFile("report.pdf", in: root)
             let entry = try makeEntry(path: file.path)
             var session = PublishSession()
-            #expect(session.start([file], intent: .updateLink) == .assess(file, .updateLink))
+            #expect(session.start([file], intent: .updateLink(entryID: "page-1")) == .assess(file, .updateLink(entryID: "page-1")))
             _ = session.assessed(.upload(UploadRequest(plan: try makePlan(for: file, home: root), update: entry)))
             #expect(session.phase == .uploading(name: "report.pdf", isUpdate: true))
             _ = session.uploaded(url: entry.url)

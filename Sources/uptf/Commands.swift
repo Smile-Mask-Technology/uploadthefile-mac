@@ -174,9 +174,9 @@ struct List: AsyncParsableCommand {
         try await runCommand {
             let context = try CLIContext()
             let pages = try await context.client.pages()
-            // Keep local links in step with the website: follow renames, forget deleted links.
-            // Only with a complete list, since a full one may have cut some off.
-            if pages.count < UptfClient.listLimit { _ = try? await context.index.reconcile(with: pages) }
+            // Keep local links in step with the website: follow renames. Links that are not in
+            // this list stay on record; they may belong to another account.
+            _ = try? await context.index.reconcile(with: pages)
             if json {
                 print(try jsonString(pages))
                 return
@@ -213,12 +213,12 @@ struct Info: AsyncParsableCommand {
         try await runCommand {
             let context = try CLIContext()
             let resolved = try await resolve(target, context: context)
-            let details = try await context.client.details(resolved.slug, includeSettings: settings)
+            let details = try await context.client.details(resolved.pageRef, includeSettings: settings)
             try? await context.index.apply(details.page)
 
             var changed: Bool?
             if let entry = resolved.entry, let local = await context.index.currentURL(for: entry) {
-                changed = try? await context.index.changedSincePublish(local)
+                changed = try? await context.index.changedSincePublish(local, entry: entry)
             }
             let output = Output(details: details, localPath: resolved.entry?.lastKnownPath, changedSincePublish: changed)
             if json {
@@ -255,7 +255,7 @@ struct Rename: AsyncParsableCommand {
         try await runCommand {
             let context = try CLIContext()
             let resolved = try await resolve(target, context: context)
-            let page = try await context.client.rename(resolved.slug, to: newName)
+            let page = try await context.client.rename(resolved.pageRef, to: newName)
             // The link keeps its id, so the local record follows the new name.
             try? await context.index.apply(page)
             print(page.url)
@@ -288,10 +288,10 @@ struct Password: AsyncParsableCommand {
                 guard try readSecret(prompt: "Repeat password: ") == password else {
                     throw UptfError.unexpected("The passwords don't match.")
                 }
-                try await client.setPassword(password, for: resolved.slug)
+                try await client.setPassword(password, for: resolved.pageRef)
                 note("Password set for \(resolved.slug).")
             case .remove:
-                try await client.removePassword(for: resolved.slug)
+                try await client.removePassword(for: resolved.pageRef)
                 note("Password removed from \(resolved.slug).")
             }
         }
@@ -312,7 +312,7 @@ struct Gate: AsyncParsableCommand {
         try await runCommand {
             let context = try CLIContext()
             let resolved = try await resolve(target, context: context)
-            try await context.client.setEmailGate(resolved.slug, enabled: state == .on, message: message)
+            try await context.client.setEmailGate(resolved.pageRef, enabled: state == .on, message: message)
             note(state == .on
                 ? "People will be asked for their email before they open \(resolved.slug)."
                 : "People can open \(resolved.slug) without giving their email.")
@@ -340,7 +340,7 @@ struct Expiry: AsyncParsableCommand {
             }
             let context = try CLIContext()
             let resolved = try await resolve(target, context: context)
-            try await context.client.setExpiry(resolved.slug, date)
+            try await context.client.setExpiry(resolved.pageRef, date)
             note(date == nil
                 ? "\(resolved.slug) stays online until you delete it."
                 : "\(resolved.slug) stays online until \(formatDate(date)).")
@@ -370,7 +370,7 @@ struct Display: AsyncParsableCommand {
         try await runCommand {
             let context = try CLIContext()
             let resolved = try await resolve(target, context: context)
-            try await context.client.setDisplay(resolved.slug, mode: DisplayMode(rawValue: mode.rawValue) ?? .preview)
+            try await context.client.setDisplay(resolved.pageRef, mode: DisplayMode(rawValue: mode.rawValue) ?? .preview)
             note("\(resolved.slug): \(describeDisplay(mode.rawValue)).")
         }
     }
@@ -394,7 +394,7 @@ struct Delete: AsyncParsableCommand {
                 }
                 guard confirm("Delete \(resolved.slug) and its link for good? People who have the link can no longer open it.") else { throw ExitCode.failure }
             }
-            try await context.client.unpublish(resolved.slug)
+            try await context.client.unpublish(resolved.pageRef)
             if let entry = resolved.entry { try? await context.index.remove(id: entry.id) }
             note("Deleted \(resolved.slug).")
         }

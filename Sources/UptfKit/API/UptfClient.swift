@@ -145,12 +145,15 @@ public struct UptfClient: Sendable {
         return PublishResult(try created.body.json)
     }
 
-    /// Replaces the file behind an existing link. The URL stays the same.
-    public func replace(_ fileURL: URL, slug: String, hostAsSite: Bool = false) async throws -> PublishResult {
+    /// Replaces the file behind an existing link. The URL stays the same. The page is addressed
+    /// by its id, so a name that changed or moved to another page can't redirect the upload;
+    /// the name goes along for servers that find the page by name only.
+    public func replace(_ fileURL: URL, page: PageInfo, hostAsSite: Bool = false) async throws -> PublishResult {
         let file = try Self.loadUpload(fileURL)
         var parts: [Components.Schemas.UploadUpdateForm] = [
             .file(.init(payload: .init(body: HTTPBody(file.data)), filename: file.fileName)),
-            .name(.init(payload: .init(body: HTTPBody(slug)))),
+            .id(.init(payload: .init(body: HTTPBody(page.id)))),
+            .name(.init(payload: .init(body: HTTPBody(page.slug)))),
         ]
         if hostAsSite {
             parts.append(.host(.init(payload: .init(body: HTTPBody("true")))))
@@ -290,6 +293,6 @@ public struct UptfClient: Sendable {
 
 extension PublishResult {
     init(_ result: Components.Schemas.UploadResultEnvelope) {
-        self.init(url: result.data.url, slug: result.data.slug, hasHtml: result.data.hasHtml)
+        self.init(url: result.data.url, slug: result.data.slug, hasHtml: result.data.hasHtml, id: result.data.id)
     }
 }

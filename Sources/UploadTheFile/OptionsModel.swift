@@ -30,8 +30,6 @@ final class OptionsModel {
     private let client: UptfClient
     private(set) var page: PageInfo
     private(set) var load: Load = .loading
-    /// The name the API uses in paths; changes after a rename.
-    private var slug: String
 
     // Name
     var nameDraft: String
@@ -62,7 +60,6 @@ final class OptionsModel {
     init(page: PageInfo, client: UptfClient) {
         self.page = page
         self.client = client
-        slug = page.slug
         pageID = page.id
         nameDraft = page.slug
         apply(expiry: page.expiresAt)
@@ -103,7 +100,7 @@ final class OptionsModel {
     var passwordProblem: String? { OptionsRules.passwordProblem(newPassword, confirmation: confirmPassword) }
     var canSavePassword: Bool { OptionsRules.canSavePassword(newPassword, confirmation: confirmPassword) && !passwordStatus.isWorking }
     var nameProblem: String? { OptionsRules.nameProblem(nameDraft) }
-    var canRename: Bool { OptionsRules.canRename(from: slug, to: nameDraft) && !nameStatus.isWorking }
+    var canRename: Bool { OptionsRules.canRename(from: page.slug, to: nameDraft) && !nameStatus.isWorking }
     var expiryProblem: String? { OptionsRules.expiryProblem(neverExpires: neverExpires, date: expiryDate) }
     var canSaveExpiry: Bool { expiryProblem == nil && !expiryStatus.isWorking }
 
@@ -112,7 +109,7 @@ final class OptionsModel {
     func open() async {
         load = .loading
         do {
-            let details = try await client.details(slug, includeSettings: true)
+            let details = try await client.details(pageID, includeSettings: true)
             page = details.page
             passwordProtected = details.passwordProtected
             gateEnabled = details.emailGateEnabled ?? false
@@ -139,9 +136,8 @@ final class OptionsModel {
     func rename() async {
         let proposed = nameDraft.trimmingCharacters(in: .whitespaces)
         await save(\.nameStatus, saved: "Renamed. The old link stops working.") {
-            let renamed = try await client.rename(slug, to: proposed)
+            let renamed = try await client.rename(pageID, to: proposed)
             page = renamed
-            slug = renamed.slug
             nameDraft = renamed.slug
             AppModel.shared.replace(renamed)
         }
@@ -150,7 +146,7 @@ final class OptionsModel {
     func setPassword() async {
         let password = newPassword
         await save(\.passwordStatus, saved: "Password set.") {
-            try await client.setPassword(password, for: slug)
+            try await client.setPassword(password, for: pageID)
             passwordProtected = true
             newPassword = ""
             confirmPassword = ""
@@ -159,7 +155,7 @@ final class OptionsModel {
 
     func removePassword() async {
         await save(\.passwordStatus, saved: "Password removed.") {
-            try await client.removePassword(for: slug)
+            try await client.removePassword(for: pageID)
             passwordProtected = false
         }
     }
@@ -168,14 +164,14 @@ final class OptionsModel {
         let enabled = gateEnabled
         let message = OptionsRules.clampedGateMessage(gateMessage)
         await save(\.gateStatus, saved: enabled ? "People will be asked for their email first." : "People can open it without giving their email.") {
-            try await client.setEmailGate(slug, enabled: enabled, message: message)
+            try await client.setEmailGate(pageID, enabled: enabled, message: message)
         }
     }
 
     func saveExpiry() async {
         let date = OptionsRules.expiryToSend(neverExpires: neverExpires, date: expiryDate)
         await save(\.expiryStatus, saved: date == nil ? "Your link stays online until you delete it." : "Saved. Your link stays online until then.") {
-            try await client.setExpiry(slug, date)
+            try await client.setExpiry(pageID, date)
             page.expiresAt = date
             AppModel.shared.replace(page)
         }
@@ -184,7 +180,7 @@ final class OptionsModel {
     func saveDisplay() async {
         let mode = displayMode
         await save(\.displayStatus, saved: "Saved") {
-            try await client.setDisplay(slug, mode: mode)
+            try await client.setDisplay(pageID, mode: mode)
             savedDisplay = mode
         }
     }

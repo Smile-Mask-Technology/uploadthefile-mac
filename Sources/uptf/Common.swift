@@ -76,8 +76,11 @@ struct CLIContext {
 // MARK: - Resolving <path-or-name>
 
 struct Target {
-    /// The page's current name (or id) on the server: what API paths use.
+    /// The page's current name (or id) on the server, for messages.
     var slug: String
+    /// What API paths use: the page's id when the target came from a local path, otherwise the
+    /// name or id the person typed. An id never changes, a name can move to another page.
+    var pageRef: String
     /// The local record, when the page was published from this Mac.
     var entry: PublishedEntry?
 }
@@ -96,7 +99,7 @@ func resolve(_ reference: String, context: CLIContext) async throws -> Target {
             guard let page = try await context.publisher.livePage(for: entry) else {
                 throw UptfError.unexpected("\(reference) went online at \(entry.url), but that link isn't in your account anymore. Run `uptf publish \(reference)` to get a new one.")
             }
-            return Target(slug: page.slug, entry: entry)
+            return Target(slug: page.slug, pageRef: page.id, entry: entry)
         }
         if looksLikePath {
             throw UptfError.unexpected("\(reference) isn't online from this Mac yet. Run `uptf publish \(reference)` first, or use the link's name.")
@@ -104,7 +107,7 @@ func resolve(_ reference: String, context: CLIContext) async throws -> Target {
     } else if looksLikePath {
         throw UptfError.unexpected("No such file or folder: \(reference)")
     }
-    return Target(slug: reference, entry: try await context.index.entry(matching: reference))
+    return Target(slug: reference, pageRef: reference, entry: try await context.index.entry(matching: reference))
 }
 
 // MARK: - Interaction

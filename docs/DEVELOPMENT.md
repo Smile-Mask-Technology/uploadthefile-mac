@@ -101,7 +101,7 @@ comments; the system's parser rejects them).
 **Rate limits.** Free accounts get 20 API reads and 20 writes per hour, shared by every app on the
 account, so the clients are frugal and never retry on their own: the link list is one read, cached
 for 10 minutes; a link's settings are read only when its window opens (or `uptf info --settings`);
-publishing is one write plus one read. HTTP 429 shows "Too many changes in a short time. Try again in
+publishing is one write (and one more read only if the server's answer has no page id). HTTP 429 shows "Too many changes in a short time. Try again in
 N minutes." (`uptf` exits with status 5).
 
 **Finder.** Two macOS Services in `Resources/Info.plist`: **Publish with Upload the File** and

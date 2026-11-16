@@ -61,5 +61,5 @@ func makeAssessor(
     let publisher = Publisher(client: client, index: index)
     return PublishAssessor(
         prepare: { url, allow in try publisher.prepare(url, allowSensitive: allow) },
-        lookup: existing, home: home)
+        lookup: { url, _ in try await existing(url) }, home: home)
 }
