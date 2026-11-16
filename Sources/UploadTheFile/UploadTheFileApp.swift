@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let services = ServicesProvider()
     private let notificationDelegate = NotificationDelegate()
     private var statusItem: StatusItemController?
+    private var updates: AppUpdates?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Also true when run without the app bundle's LSUIElement (for example from `swift run`).
@@ -24,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = StatusItemController(model: AppModel.shared)
+        let updates = AppUpdates()
+        self.updates = updates
+        statusItem = StatusItemController(model: AppModel.shared, updates: updates)
         NSApp.servicesProvider = services
         // Make Finder notice the Services this app declares, without a logout.
         NSUpdateDynamicServices()

@@ -9,6 +9,7 @@ import UploadTheFileCore
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let model: AppModel
+    private let updates: AppUpdates
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var dropView: StatusDropView?
@@ -26,8 +27,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// How many times a resize waits for a drag to end (about ten seconds).
     private static let resizeRetries = 100
 
-    init(model: AppModel) {
+    init(model: AppModel, updates: AppUpdates) {
         self.model = model
+        self.updates = updates
         super.init()
         configurePopover()
         model.presentStatus = { [weak self] in self?.presentStatus() }
@@ -166,6 +168,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         menu.addItem(item("Open Upload the File", #selector(openFromMenu)))
         menu.addItem(item("Manage Files on \(model.siteLabel)", #selector(manageFromMenu)))
         menu.addItem(.separator())
+        menu.addItem(updates.checkForUpdatesItem())
         menu.addItem(item("Quit Upload the File", #selector(quitFromMenu), key: "q"))
         // Attaching the menu for one click lets AppKit position and highlight it like any other
         // menu bar menu; it is removed again so left-clicks keep opening the popover.

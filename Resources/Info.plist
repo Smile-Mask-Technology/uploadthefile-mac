@@ -69,5 +69,13 @@
 			</array>
 		</dict>
 	</array>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/Smile-Mask-Technology/uploadthefile-mac/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>A+sSRMIu/QaRdklm4R4iQKYEIy6tCxtzosfQu8LsyEw=</string>
 </dict>
 </plist>
