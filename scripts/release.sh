@@ -38,6 +38,9 @@ tail -1 build/release-tests.log
 
 echo "==> Universal signed app"
 UNIVERSAL=1 SIGN_IDENTITY="$SIGN_IDENTITY" scripts/build-app.sh
+for f in THIRD_PARTY_NOTICES.txt LICENSE; do
+  [ -s "$APP/Contents/Resources/$f" ] || { echo "The app is missing Contents/Resources/$f" >&2; exit 1; }
+done
 for BIN in "$APP/Contents/MacOS/UploadTheFile" "$APP/Contents/Resources/uptf"; do
   echo "    $(basename "$BIN"): $(lipo -archs "$BIN")"
 done
@@ -55,6 +58,8 @@ STAGE="$OUT/dmg"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/Upload the File.app"
 ln -s /Applications "$STAGE/Applications"
+cp LICENSE "$STAGE/LICENSE.txt"
+cp THIRD_PARTY_NOTICES.txt "$STAGE/THIRD_PARTY_NOTICES.txt"
 hdiutil create -volname "Upload the File" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" > /dev/null
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"

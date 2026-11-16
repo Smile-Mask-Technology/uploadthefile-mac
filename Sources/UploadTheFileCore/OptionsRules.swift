@@ -58,6 +58,14 @@ public enum OptionsRules {
         siteURL(origin: origin, path: "/dashboard")
     }
 
+    /// The line under the sign-in button, as Markdown with both links (the website's own
+    /// sign-in wording): "By continuing, you agree to our Terms and Privacy Policy."
+    public static func signInNotice(origin: URL) -> String {
+        let terms = siteURL(origin: origin, path: "/terms").absoluteString
+        let privacy = siteURL(origin: origin, path: "/privacy").absoluteString
+        return "By continuing, you agree to our [Terms](\(terms)) and [Privacy Policy](\(privacy))."
+    }
+
     private static func siteURL(origin: URL, path: String) -> URL {
         var parts = URLComponents()
         parts.scheme = origin.scheme

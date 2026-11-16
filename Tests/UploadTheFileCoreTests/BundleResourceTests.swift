@@ -27,7 +27,26 @@ struct BundleResourceTests {
         #expect(plist["CFBundleExecutable"] as? String == "UploadTheFile")
         #expect(plist["LSUIElement"] as? Bool == true)
         #expect(plist["LSMinimumSystemVersion"] as? String == "14.0")
-        #expect(plist["NSHumanReadableCopyright"] as? String == "Copyright © 2026 Smile Mask Technology")
+        #expect(plist["NSHumanReadableCopyright"] as? String == "Copyright © 2026 Smile Mask Technology FZE")
+    }
+
+    /// THIRD_PARTY_NOTICES.txt ships in the app (build-app.sh) and the DMG (release.sh); it must
+    /// name every package compiled into them at the version Package.resolved pins.
+    /// After a dependency update: scripts/make-notices.sh.
+    @Test func thirdPartyNoticesMatchThePinnedPackages() throws {
+        let notices = try String(contentsOf: Self.root.appendingPathComponent("THIRD_PARTY_NOTICES.txt"), encoding: .utf8)
+        let resolved = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: Self.root.appendingPathComponent("Package.resolved"))) as? [String: Any]
+        let pins = try #require(resolved?["pins"] as? [[String: Any]])
+        let linked = ["swift-openapi-runtime", "swift-openapi-urlsession", "swift-http-types",
+                      "swift-collections", "swift-argument-parser"]
+        for name in linked {
+            let pin = try #require(pins.first { $0["identity"] as? String == name }, "\(name) is not pinned")
+            let version = try #require((pin["state"] as? [String: Any])?["version"] as? String)
+            #expect(notices.contains("\n\(name) \(version)\n"), "THIRD_PARTY_NOTICES.txt lacks \(name) \(version): run scripts/make-notices.sh")
+        }
+        #expect(notices.contains("Apache License"))
+        #expect(notices.contains("TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION"))
     }
 
     @Test func finderServicesAreDeclaredForFilesAndFolders() throws {

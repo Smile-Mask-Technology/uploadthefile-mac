@@ -64,7 +64,7 @@ Prefer [Homebrew](https://brew.sh)?
 brew install --cask smile-mask-technology/tap/upload-the-file
 ```
 
-The app is signed by Smile Mask Technology and notarized by Apple. Older versions and release notes
+The app is signed by Smile Mask Technology FZE and notarized by Apple. Older versions and release notes
 are on the [releases page](https://github.com/Smile-Mask-Technology/uploadthefile-mac/releases).
 
 ## From the terminal
@@ -105,4 +105,6 @@ Building from source, the Swift library, the tests and releases: see
 
 ## License
 
-MIT, see [LICENSE](LICENSE). © 2026 Smile Mask Technology.
+MIT, see [LICENSE](LICENSE). © 2026 Smile Mask Technology FZE. The open-source packages it includes
+are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). The Upload the File name and logo
+are not covered by the MIT license.

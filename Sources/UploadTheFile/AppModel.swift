@@ -44,6 +44,13 @@ final class AppModel {
         OptionsRules.pricingURL(origin: backend?.config.originURL ?? URL(string: "https://uploadthefile.com")!)
     }
     /// "Manage Files": the website's dashboard, for everything the app does not do.
+    /// "By continuing, you agree to our Terms and Privacy Policy." with both links.
+    var signInNotice: AttributedString {
+        let markdown = OptionsRules.signInNotice(origin: backend?.config.originURL ?? URL(string: "https://uploadthefile.com")!)
+        return (try? AttributedString(markdown: markdown))
+            ?? AttributedString("By continuing, you agree to our Terms and Privacy Policy.")
+    }
+
     var dashboardURL: URL {
         OptionsRules.dashboardURL(origin: backend?.config.originURL ?? URL(string: "https://uploadthefile.com")!)
     }

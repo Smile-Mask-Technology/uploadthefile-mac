@@ -196,4 +196,14 @@ struct OptionsRulesTests {
         #expect(OptionsRules.dashboardURL(origin: URL(string: "https://uploadthefile.com/")!).absoluteString == "https://uploadthefile.com/dashboard")
         #expect(OptionsRules.dashboardURL(origin: URL(string: "http://localhost:3000")!).absoluteString == "http://localhost:3000/dashboard")
     }
+
+    @Test func signInNoticeLinksTheSitesTermsAndPrivacyPolicy() throws {
+        let markdown = OptionsRules.signInNotice(origin: URL(string: "https://uploadthefile.com/")!)
+        #expect(markdown == "By continuing, you agree to our [Terms](https://uploadthefile.com/terms) and [Privacy Policy](https://uploadthefile.com/privacy).")
+        let text = try AttributedString(markdown: markdown)
+        let links = text.runs.compactMap { $0.link?.absoluteString }
+        #expect(links == ["https://uploadthefile.com/terms", "https://uploadthefile.com/privacy"])
+        #expect(String(text.characters) == "By continuing, you agree to our Terms and Privacy Policy.")
+        #expect(OptionsRules.signInNotice(origin: URL(string: "http://localhost:3000")!).contains("(http://localhost:3000/terms)"))
+    }
 }

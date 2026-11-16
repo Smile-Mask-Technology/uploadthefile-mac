@@ -53,6 +53,9 @@ mkdir -p "$APP/Contents/Resources/MenuBarIcons"
 cp Resources/MenuBarIcons/*.pdf "$APP/Contents/Resources/MenuBarIcons/"
 # The colour logo shown inside the app (header, signed-out screen).
 cp Resources/BrandMark.pdf "$APP/Contents/Resources/BrandMark.pdf"
+# Licences of the open-source packages compiled in (scripts/make-notices.sh) and the app's own.
+cp THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/THIRD_PARTY_NOTICES.txt"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 PLIST_BUDDY=/usr/libexec/PlistBuddy
