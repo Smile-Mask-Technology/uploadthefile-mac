@@ -3,8 +3,10 @@ import Observation
 import UploadTheFileCore
 import UptfKit
 
-/// State of one Options window. Settings are read when the window opens (three reads, one after
-/// the other), never before; every control saves on its own and reports under itself.
+/// State of one Options window. Settings are read when the window opens (the page, then its
+/// password, email and, for a single file, display setting, one after the other), never before;
+/// every control saves on its own and reports under itself. A setting that could not be read is
+/// shown as such and cannot be saved over.
 @MainActor
 @Observable
 final class OptionsModel {
@@ -30,6 +32,9 @@ final class OptionsModel {
     private let client: UptfClient
     private(set) var page: PageInfo
     private(set) var load: Load = .loading
+    /// What reading the page's settings gave; nil until they were read (or when reading stopped
+    /// early), so nothing can be saved over a value that was never seen.
+    private(set) var settings: PageSettings?
 
     // Name
     var nameDraft: String
@@ -80,6 +85,10 @@ final class OptionsModel {
                 displayMode = mode
                 savedDisplay = mode
             }
+            self.settings = PageSettings(
+                password: settings.passwordProtected.map { SettingRead<Bool>.value($0) } ?? .notOnPlan,
+                emailGate: .value(EmailGateSetting(enabled: settings.gateEnabled, message: settings.gateMessage)),
+                display: settings.displayMode.map { SettingRead<DisplayMode>.value($0) })
         }
         self.passwordStatus = passwordStatus
         self.gateStatus = gateStatus
@@ -103,22 +112,45 @@ final class OptionsModel {
     var canRename: Bool { OptionsRules.canRename(from: page.slug, to: nameDraft) && !nameStatus.isWorking }
     var expiryProblem: String? { OptionsRules.expiryProblem(neverExpires: neverExpires, date: expiryDate) }
     var canSaveExpiry: Bool { expiryProblem == nil && !expiryStatus.isWorking }
+    /// Email: only for a setting that was read (or that the plan keeps from us and the server will
+    /// answer for), so Save never writes "off" over a gate that could not be read.
+    var canEditGate: Bool { settings?.emailGate.allowsSaving ?? false }
+    var canSaveGate: Bool { canEditGate && !gateStatus.isWorking }
+    var canChangeDisplay: Bool { settings?.display?.allowsSaving ?? false }
+    /// Why a setting is not shown: the sentence to put in its place.
+    var passwordReadError: String? { settings?.password.failure }
+    var gateReadError: String? { settings?.emailGate.failure }
+    var displayReadError: String? { settings?.display?.failure }
 
     // MARK: Loading
 
     func open() async {
         load = .loading
+        settings = nil
         do {
-            let details = try await client.details(pageID, includeSettings: true)
-            page = details.page
-            passwordProtected = details.passwordProtected
-            gateEnabled = details.emailGateEnabled ?? false
-            gateMessage = details.emailGateMessage ?? ""
-            if let mode = details.displayMode {
+            let fetched = try await client.page(pageID)
+            page = fetched
+            apply(expiry: fetched.expiresAt)
+            let api = client
+            let id = pageID
+            let read = try await SettingsReader.read(
+                readsDisplay: SettingsReader.supportsDisplayMode(kind: fetched.kind),
+                password: { try await api.passwordProtected(id) },
+                emailGate: {
+                    let gate = try await api.emailGate(id)
+                    return EmailGateSetting(enabled: gate.enabled, message: gate.message)
+                },
+                display: { try await api.displayMode(id) })
+            settings = read
+            passwordProtected = read.password.value
+            if let gate = read.emailGate.value {
+                gateEnabled = gate.enabled
+                gateMessage = gate.message ?? ""
+            }
+            if let mode = read.display?.value {
                 displayMode = mode
                 savedDisplay = mode
             }
-            apply(expiry: details.page.expiresAt)
             load = .loaded
         } catch {
             let message = UserMessage.text(for: error)
@@ -161,6 +193,7 @@ final class OptionsModel {
     }
 
     func saveGate() async {
+        guard canSaveGate else { return }
         let enabled = gateEnabled
         let message = OptionsRules.clampedGateMessage(gateMessage)
         await save(\.gateStatus, saved: enabled ? "People will be asked for their email first." : "People can open it without giving their email.") {

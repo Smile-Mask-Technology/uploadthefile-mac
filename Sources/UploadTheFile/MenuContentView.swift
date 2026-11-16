@@ -275,6 +275,7 @@ private struct PageRowView: View {
                 CopyIconButton(copied: copied) { model.copyLink(row) }
                 Menu {
                     Button("Open in Browser") { model.openInBrowser(row) }
+                        .disabled(!model.canOpenLink(row.page.url))
                     Button("Copy Link") { model.copyLink(row) }
                     Button("Set Up Link…") {
                         OptionsWindowController.shared.open(pageID: row.id, appModel: model)
@@ -330,9 +331,7 @@ private struct PageRowView: View {
                 .lineLimit(1)
                 .allowsHitTesting(false)
         } else {
-            let link = OpenLinkButton(
-                text: row.linkLabel, accessibilityName: "Open \(row.title) in your browser"
-            ) { model.openInBrowser(row) }
+            let link = RowLink(model: model, row: row)
             // The kind and size go first when the line is too narrow (a Replace button takes room).
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 4) {
@@ -347,6 +346,27 @@ private struct PageRowView: View {
                 }
                 link
             }
+        }
+    }
+}
+
+/// The link under a row's name. A click opens it; a link that is not a web link is plain text.
+private struct RowLink: View {
+    var model: AppModel
+    var row: PageRow
+
+    var body: some View {
+        if model.canOpenLink(row.page.url) {
+            OpenLinkButton(
+                text: row.linkLabel, accessibilityName: "Open \(row.title) in your browser"
+            ) { model.openInBrowser(row) }
+        } else {
+            Text(row.linkLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .allowsHitTesting(false)
         }
     }
 }

@@ -73,7 +73,11 @@ enum Alerts {
         alert.informativeText = "The file and its link are removed from your account. People who have the link can no longer open it. This can't be undone."
         let remove = alert.addButton(withTitle: "Delete")
         remove.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        // The first button gets Return by default; here it is the destructive one, so it gets no
+        // key at all: Delete is chosen by clicking it. Cancel keeps Escape.
+        remove.keyEquivalent = ""
+        let cancel = alert.addButton(withTitle: "Cancel")
+        cancel.keyEquivalent = "\u{1b}"
         AppActivation.bringToFront()
         return alert.runModal() == .alertFirstButtonReturn
     }

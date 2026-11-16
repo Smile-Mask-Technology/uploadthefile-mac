@@ -54,7 +54,7 @@ public struct PageRow: Identifiable, Equatable, Sendable {
     public var canReveal: Bool { localURL != nil && (local == .changed || local == .unchanged) }
 
     /// Display mode only means something for a single file, not for a website.
-    public var supportsDisplayMode: Bool { page.kind != "site" }
+    public var supportsDisplayMode: Bool { SettingsReader.supportsDisplayMode(kind: page.kind) }
 }
 
 public enum LinkLabel {
