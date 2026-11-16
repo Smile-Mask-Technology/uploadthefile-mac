@@ -1,0 +1,3589 @@
+openapi: 3.0.3
+
+info:
+  title: upload.tf API
+  version: "1.3.0"
+  description: |
+    The public REST API for [upload.tf](https://upload.tf): upload HTML pages and
+    multi-file static sites, manage hosted pages, and create/manage short links,
+    all over HTTP.
+
+    ## Authentication
+
+    Every endpoint is authenticated by an API key (signed-in desktop apps: see
+    **Desktop apps** below). Cookies/sessions are
+    never accepted, so a browser login can't be conflated with API identity. Pass
+    your key either way:
+
+    - `x-api-key: utf_xxxxxxxx…` (preferred), or
+    - `Authorization: Bearer utf_xxxxxxxx…` (RFC 6750)
+
+    Generate keys in the [dashboard](https://upload.tf/dashboard/api) → **API**.
+    A key is shown once at creation: store it securely; only its hash is kept
+    server-side. Keys are prefixed `utf_`.
+
+    ## Desktop apps
+
+    A signed-in desktop app (such as the open-source Upload the File for Mac) can
+    call a small set of page operations on every plan, without an API key: list and
+    read pages, publish (`POST`/`PUT /upload`), rename, delete, and the password,
+    email-gate, expiry and display settings. Those operations list `OAuth2` in their
+    security; every other endpoint accepts API keys only.
+
+    The app signs the user in with OAuth 2.1 + PKCE (see the `OAuth2` scheme and
+    docs/connectors.md), asking for the resource `<site origin>/api/v1`
+    (`https://uploadthefile.com/api/v1`), and sends the access token as
+    `Authorization: Bearer <token>`. The token must have been minted for exactly that
+    resource: tokens for the AI-connector endpoints, or minted without a resource, are
+    refused here, and an app token is refused at the connector endpoints. Reads need
+    `sites:read`, writes `sites:write`. A loopback redirect
+    (`http://127.0.0.1:<any port>/…`) is matched on everything but the port (RFC 8252).
+    Each operation keeps its plan rules (for example, password protection only on plans
+    that include it), and desktop-app access is a per-plan setting, on for every plan.
+
+    ## Access requirements
+
+    The API is available on plans that include **API access**, by default the
+    Business and Corporate plans.
+
+    Your key always authenticates, but a request is rejected with `403` (plus an
+    `upgrade` hint) when your current plan does not include API access. Call
+    `GET /account` at any time to check whether your plan has it (see
+    `limits.apiAccess`).
+
+    ## Response envelope
+
+    Every JSON response uses a uniform envelope:
+
+    - Success: `{ "success": true, "data": { … } }`
+    - Error:   `{ "success": false, "error": "human-readable message" }`
+
+    On a `403` plan-limit rejection the error envelope may also carry an
+    `upgrade` object describing the upgrade path.
+
+    ## Rate limiting & usage
+
+    Requests are rate-limited per API key: reads and writes have separate budgets
+    that depend on your plan. A throttled request returns `429 Too Many Requests`;
+    write endpoints include a `Retry-After` header (seconds). On plans with
+    pay-as-you-go enabled, calls beyond your plan's included allowance are billed as
+    usage rather than blocked.
+
+    ## CORS
+
+    All responses send permissive CORS headers (`Access-Control-Allow-Origin: *`)
+    **without** `Allow-Credentials`, and every path answers an `OPTIONS` preflight
+    with `204`. (Preflight operations are omitted below; browsers issue them
+    automatically.)
+  contact:
+    name: upload.tf support
+    url: https://upload.tf
+  license:
+    name: Proprietary
+    url: https://upload.tf
+
+servers:
+  - url: https://upload.tf/api/v1
+    description: Production
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+tags:
+  - name: Pages
+    description: Upload, host, and manage HTML pages and static sites.
+  - name: Short links
+    description: Create and manage short links on the upl.tf domain.
+  - name: Domains
+    description: Connect and manage custom domains (search, connect, rebind, disconnect).
+  - name: Account
+    description: Read your plan, limits, and usage.
+  - name: Team
+    description: Manage your account's collaborators (list, invite, revoke, and resend).
+  - name: AI connectors
+    description: |
+      OAuth 2.1 authorization server and the MCP endpoint that let an AI
+      connector (Claude, ChatGPT, an IDE agent) act on a user's behalf.
+      Lives outside /api/v1, at the site origin (see each operation's
+      `servers` override). Human-friendly guide: docs/connectors.md.
+
+paths:
+  /upload:
+    post:
+      tags: [Pages]
+      summary: Create a page
+      operationId: createPage
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Upload an `.html` file or a `.zip` static site and get a live URL.
+        Supply an optional custom name to control the subdomain, or omit it for a
+        randomly generated one. Use `host=true` to extract a `.zip` and serve it
+        as a site instead of a downloadable archive. Plan-based size, lifetime,
+        and ZIP-support caps still apply.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadCreateForm'
+      responses:
+        '201':
+          description: Page created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResultEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [Pages]
+      summary: Update a page in place
+      operationId: updatePage
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Replace the files of a page you own, keeping the same URL. The target page
+        is identified by `name` / `subdomain` / `domain` (first present wins). One
+        of these is **required** for an update.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadUpdateForm'
+      responses:
+        '200':
+          description: Page updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResultEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /pages:
+    get:
+      tags: [Pages]
+      summary: List pages
+      operationId: listPages
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: List the caller's hosted pages and sites, newest first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of pages to return. Clamped to `[1, 1000]`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: A page list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagesListEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /pages/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get a page
+      operationId: getPage
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: Fetch a single page you own, addressed by its id or public name.
+      responses:
+        '200':
+          description: The page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [Pages]
+      summary: Rename a page
+      operationId: renamePage
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Change a page's public subdomain name. Only the public name changes: the
+        immutable id (storage prefix) is stable, so files don't move and old
+        id-based links keep working.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenamePageRequest'
+      responses:
+        '200':
+          description: The renamed page (both `name` and `url` reflect the new name).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Pages]
+      summary: Delete a page
+      operationId: deletePage
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: Permanently delete a page you own.
+      responses:
+        '200':
+          description: Page deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/host:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    post:
+      tags: [Pages]
+      summary: Unzip & host a page
+      operationId: hostPage
+      description: |
+        Promote one of your downloadable-ZIP pages (`kind: zip`) into a hosted
+        site in place, keeping the same URL. Mirrors the dashboard's
+        "Unzip & host app" button; re-runs extraction, per-entry, and Safe
+        Browsing checks. Only a page whose `kind` is `zip` can be hosted.
+      responses:
+        '200':
+          description: The ZIP was extracted and is now served as a site.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostEnvelope'
+        '400':
+          description: The page is not a downloadable ZIP.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/files:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: List a hosted site's files
+      operationId: listPageFiles
+      description: |
+        The individual files inside a page that HAS files — a hosted site
+        (`kind: site`), or a single HTML page (`kind: html`), which is a one-file
+        site with the same manifest shape — listed with their sizes and content
+        types. Every other kind stores one opaque object with no addressable paths:
+        a downloadable ZIP has no file list and returns 400.
+      responses:
+        '200':
+          description: The project's files.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFilesEnvelope'
+        '400':
+          description: >-
+            The page has no individually addressable files — it is neither a hosted
+            site (`kind: site`) nor an HTML page (`kind: html`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Pages]
+      summary: Apply a batch of file changes
+      operationId: applyPageFileChanges
+      description: |
+        Add, replace, and delete several files in ONE atomic commit: either every
+        change lands or none does. Send each new or replacement file as a `file`
+        part whose filename is its path inside the site (e.g. `assets/app.js`), and
+        each removal as a `delete` part containing the path.
+
+        The entry file can be replaced but never removed; a request that would
+        leave the page without it returns 409. Per-file and total size limits
+        depend on the caller's plan and are reported by the GET above; read them
+        from there rather than assuming the ZIP upload's limits.
+
+        **An HTML page grows into a site.** Committing a change that leaves a
+        `kind: html` page holding MORE than one file promotes it to `kind: site` in
+        the same transaction, and the response reports `becameSite: true`. The
+        promotion is one-way and happens IN PLACE: the page id, slug, public URL and
+        entry path are all unchanged, so no link ever breaks and no redirect is
+        involved. Replacing the single file of an HTML page is an edit, not an
+        expansion, and leaves it a `kind: html` page.
+
+        A hosted site cannot offer `display_mode: download`, so a page carrying that
+        mode has it reset to `preview_download` by the same statement that promotes
+        it; the response then also reports `displayModeReset: true`. Both flags are
+        the commit's own account of what it did — treat them as the authority rather
+        than re-deriving the rule client-side.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              description: At least one of `file` or `delete` must be present.
+              anyOf:
+                - required: [file]
+                - required: [delete]
+              properties:
+                file:
+                  type: array
+                  description: Files to add or replace; each filename is its path in the site.
+                  items:
+                    type: string
+                    format: binary
+                delete:
+                  type: array
+                  description: Paths to remove from the site.
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: The changes were committed; the refreshed file list is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFilesEnvelope'
+        '400':
+          description: >-
+            The page has no individually addressable files (neither `kind: site` nor
+            `kind: html`), or a path or change was invalid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Your plan doesn't permit this action (see the shared description), or
+            the write was refused by the upload gate: an account or workspace
+            hold, or an actor/IP blocklist match.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The page is not currently editable: it is under moderation review,
+            locked by its plan, or expired. Also returned when the change would
+            delete the site's entry file.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422':
+          description: >-
+            A URL in the submitted HTML or SVG was flagged as unsafe by Safe Browsing,
+            so the whole batch was refused. The same screen a ZIP upload passes at
+            publish; nothing was written.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /pages/{slug}/files/{path}:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+      - $ref: '#/components/parameters/FilePath'
+    put:
+      tags: [Pages]
+      summary: Replace one file
+      operationId: replacePageFile
+      description: |
+        Replace the bytes of a single file, keeping the page's URL unchanged. The
+        body is the raw file content. If the path does not yet exist it is added —
+        and adding a second path to a single HTML page (`kind: html`) promotes it to
+        a hosted site exactly as the batch endpoint above describes, reporting
+        `becameSite` (and `displayModeReset`) in the response.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: The file was written; the refreshed file list is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFilesEnvelope'
+        '400':
+          description: >-
+            The page has no individually addressable files (neither `kind: site` nor
+            `kind: html`), the body was empty, or the path was invalid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Your plan doesn't permit this action (see the shared description), or
+            the write was refused by the upload gate: an account or workspace
+            hold, or an actor/IP blocklist match.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The page is not currently editable (under review, plan-locked, or expired).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422':
+          description: >-
+            A URL in the submitted HTML or SVG was flagged as unsafe by Safe Browsing,
+            so the change was refused. The same screen a ZIP upload passes at publish;
+            nothing was written.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [Pages]
+      summary: Delete one file
+      operationId: deletePageFile
+      description: |
+        Remove a single file from a hosted site or HTML page. The entry file cannot
+        be deleted (replace it instead), and neither can the last remaining file.
+        A deletion can never promote a page, so its `becameSite` is always false —
+        the `kind: html` to `kind: site` flip is one-way and expansion-only. Deleting a
+        path that isn't in the current file list is idempotent: it returns 200
+        with the file list unchanged, not an error. The 404 below is for an
+        unknown or not-owned page; an unrecognized file path is never a 404.
+      responses:
+        '200':
+          description: The file was removed; the refreshed file list is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFilesEnvelope'
+        '400':
+          description: >-
+            The page has no individually addressable files (neither `kind: site` nor
+            `kind: html`), or the path was invalid.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Your plan doesn't permit this action (see the shared description), or
+            the write was refused by the upload gate: an account or workspace
+            hold, or an actor/IP blocklist match.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The page is not currently editable, or the deletion would remove the
+            site's entry file or its last remaining file.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /pages/{slug}/password:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get page password state
+      operationId: getPagePassword
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: Whether the page is password-protected, and whether this caller may enable protection.
+      responses:
+        '200':
+          description: Password protection state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PagePasswordStateEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [Pages]
+      summary: Set page password
+      operationId: setPagePassword
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Set or change the page's link password (6–72 chars). Turning protection on
+        requires a plan that includes password protection (Pro and above by default).
+        Changing or removing an existing password is always allowed.
+
+        A page that a platform has made private cannot have a password: setting one
+        answers `409` and writes nothing. Removing a password stays allowed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPasswordRequest' }
+      responses:
+        '200':
+          description: Password set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PagePasswordResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            The page is private, so it can't have a password. Switch it to password access
+            instead.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [Pages]
+      summary: Remove page password
+      operationId: removePagePassword
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: Remove password protection from the page (always allowed).
+      responses:
+        '200':
+          description: Password removed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PagePasswordResultEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/expiry:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get page expiry
+      operationId: getPageExpiry
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: The page's current hard expiry (ISO 8601, or null = never), and whether this caller may choose a custom expiry.
+      responses:
+        '200':
+          description: Expiry state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [expiresAt, entitled]
+                    properties:
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        description: ISO 8601 expiry, or null = never expires.
+                      entitled:
+                        type: boolean
+                        description: Whether this caller may set a custom expiry.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [Pages]
+      summary: Set page expiry
+      operationId: setPageExpiry
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Set the page's hard expiry: a future ISO 8601 timestamp, or null to never
+        expire. Choosing a custom expiry requires a plan with flexible retention (Pro
+        and above by default); the value is clamped to a 10-year ceiling.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expiresAt]
+              properties:
+                expiresAt:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: A future ISO 8601 timestamp, or null = never expires.
+      responses:
+        '200':
+          description: Expiry updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [expiresAt]
+                    properties:
+                      expiresAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        description: The stored expiry (clamped/canonicalized), or null = never.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/email-gate:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get email-gate config
+      operationId: getEmailGate
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: The page's email-capture gate state, prompt, consent flag, capture count, and whether this caller may enable it.
+      responses:
+        '200':
+          description: Email-gate state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailGateStateEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [Pages]
+      summary: Configure email-gate
+      operationId: setEmailGate
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Enable/disable the email-capture gate and optionally set the prompt message
+        (≤200 chars, sanitized) and consent requirement. Omitted fields are left
+        unchanged. Turning the gate on requires a plan that includes email capture
+        (Pro and above by default). Disabling is always allowed.
+
+        A page that a platform has made private cannot have an email gate: turning
+        the gate on answers `409` and writes nothing. Turning it off stays allowed and
+        also discards a gate that was saved when the page went private. Leaving
+        `enabled` out of the request leaves a saved gate as it is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetEmailGateRequest' }
+      responses:
+        '200':
+          description: Gate updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailGateUpdatedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            The page is private, so it can't have an email gate. Make it public first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [Pages]
+      summary: Disable email-gate
+      operationId: disableEmailGate
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: Turn the email-capture gate off (always allowed), also on a private page, where it discards a saved gate. Captured emails are kept.
+      responses:
+        '200':
+          description: Gate disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailGateDisabledEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/captures:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: List or export captured emails
+      operationId: getPageCaptures
+      description: |
+        The emails captured by the page's email gate. Returns JSON by default, or a
+        CSV download with `?format=csv`. JSON is bounded by `?limit` (default 1000,
+        max 50000). Owner-scoped; no entitlement beyond ownership.
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: Set to `csv` to download a CSV file instead of JSON.
+          schema: { type: string, enum: [csv] }
+        - name: limit
+          in: query
+          required: false
+          description: Max captures to return in JSON. Clamped to [1, 50000].
+          schema: { type: integer, minimum: 1, maximum: 50000, default: 1000 }
+      responses:
+        '200':
+          description: Captured emails (JSON) or a CSV download.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapturesEnvelope' }
+            text/csv:
+              schema:
+                type: string
+                description: CSV with a header row and one row per captured email.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Pages]
+      summary: Erase captured emails
+      operationId: deletePageCaptures
+      description: |
+        Erase the emails captured by the page's email gate (data-subject erasure,
+        GDPR Art 17). Send `{ "email": "…" }` to erase a single address, or
+        `{ "all": true }` to erase every capture for the page. Owner-scoped; you can
+        only erase captures for a page you own. Returns the number of rows removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteCapturesRequest' }
+      responses:
+        '200':
+          description: |
+            Captures erased. `deleted` is the number of rows removed (0 when no capture
+            matched the address). A 0 here means "no matching row", never a failed delete:
+            a store failure is a 500, so a 200 is a truthful confirmation of erasure.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapturesDeletedEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/display:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get page display mode
+      operationId: getPageDisplay
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:read']
+      description: The page's display mode and whether display mode applies to its file kind.
+      responses:
+        '200':
+          description: Display mode state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisplayModeStateEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [Pages]
+      summary: Set page display mode
+      operationId: setPageDisplay
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+        - OAuth2: ['sites:write']
+      description: |
+        Set how a renderable single-file page is shown: `preview`, `preview_download`,
+        or `download`. Only valid for renderable single-file kinds (media, PDF, a single
+        HTML/SVG); rejected otherwise. No plan gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetDisplayModeRequest' }
+      responses:
+        '200':
+          description: Display mode set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisplayModeResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /pages/{slug}/chat:
+    parameters:
+      - $ref: '#/components/parameters/PageSlug'
+    get:
+      tags: [Pages]
+      summary: Get PDF chat availability
+      operationId: getPageChat
+      description: Whether chat is enabled for the page (a PDF) and the document extraction status.
+      responses:
+        '200':
+          description: Chat availability.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatAvailabilityEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [Pages]
+      summary: Enable PDF chat
+      operationId: enablePageChat
+      description: |
+        Enable AI chat for a PDF page. Extracts the document text inline so chat is
+        ready on return. The page must be a PDF, and your plan's limits on the number
+        of chat-enabled PDFs and on pages-per-PDF apply. The response may include
+        `detail` if extraction failed.
+      responses:
+        '200':
+          description: Chat enabled (extraction status in `chat.status`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatAvailabilityEnvelope' }
+        '400':
+          description: The page is not a PDF.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Pages]
+      summary: Disable PDF chat
+      operationId: disablePageChat
+      description: Turn chat off (always allowed). Extracted text is kept for a quick re-enable.
+      responses:
+        '200':
+          description: Chat disabled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatAvailabilityEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /pages/bulk-delete:
+    post:
+      tags: [Pages]
+      summary: Bulk delete pages
+      operationId: bulkDeletePages
+      description: |
+        Delete several of your own pages in one request. Ownership is enforced
+        server-side (ids you don't own are silently ignored), and `deleted` is
+        the count actually removed. Pages that were refused, or whose deletion
+        is still in flight, are reported separately in the same response rather
+        than counted as deleted — see `BulkDeletedEnvelope`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkDeletePagesRequest'
+      responses:
+        '200':
+          description: Pages deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkDeletedEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /links:
+    get:
+      tags: [Short links]
+      summary: List short links
+      operationId: listLinks
+      description: >-
+        List the caller's short links, newest first. Pass `page` to list only the
+        links bound to one of your pages.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: >-
+            Only list the links bound to this page, addressed by its id **or** its
+            public name. A page that does not exist or is not yours yields an empty
+            list.
+          schema:
+            type: string
+          example: mysite
+      responses:
+        '200':
+          description: A short-link list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinksListEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Short links]
+      summary: Create a short link
+      operationId: createLink
+      description: |
+        Create a short link to an arbitrary public `http(s)` destination (`url`),
+        or to one of your own pages (`page`, by id or public name) — exactly one of
+        the two. A URL destination is validated (no credentials, no private/loopback
+        hosts, no self-references, ≤ 2048 chars) and screened by Google Safe
+        Browsing before creation. A page-bound link follows the page's current
+        address and is deleted with it; it answers 404 when the page does not exist
+        or is not yours. Add an optional private `name` (visible only to you) to tell
+        links apart, e.g. one per recipient. Provide an optional custom `code`,
+        otherwise a random one is generated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLinkRequest'
+      responses:
+        '201':
+          description: Short link created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: The short-link feature is not enabled on this deployment, or `page` does not name one of your pages.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnsafeDestination' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /links/bulk:
+    post:
+      tags: [Short links]
+      summary: Bulk update short links
+      operationId: bulkUpdateLinks
+      description: |
+        Disable, enable, or delete several of your own short links in one request.
+        Ids you don't own are ignored; `affected` is the count actually changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkLinkActionRequest'
+      responses:
+        '200':
+          description: The bulk action was applied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkAffectedEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /links/{id}:
+    parameters:
+      - $ref: '#/components/parameters/LinkId'
+    get:
+      tags: [Short links]
+      summary: Get a short link
+      operationId: getLink
+      description: Fetch a single short link you own.
+      responses:
+        '200':
+          description: The short link.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [Short links]
+      summary: Update a short link
+      operationId: updateLink
+      description: |
+        Update a short link you own. `disabled` (pause/resume) and `name` (private
+        label) are always allowed; `url` (repoint) and `expiry` changes are value
+        edits gated to paid plans. A link bound to a page cannot be repointed: it
+        follows its page. A new destination is re-validated and re-screened by Safe
+        Browsing. The custom code and click history are always preserved. At least
+        one field must be provided.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLinkRequest'
+      responses:
+        '200':
+          description: The updated short link.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnsafeDestination' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Short links]
+      summary: Delete a short link
+      operationId: deleteLink
+      description: Permanently delete a short link you own.
+      responses:
+        '200':
+          description: Short link deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /links/{id}/clicks:
+    parameters:
+      - $ref: '#/components/parameters/LinkId'
+    get:
+      tags: [Short links]
+      summary: Get link click history
+      operationId: getLinkClicks
+      description: |
+        Daily click history for one of your short links, oldest → newest,
+        gap-filled with zeros.
+
+        The window is your plan's analytics history, which differs by plan and
+        can change (the current figures are on /pricing), unless you ask for a
+        shorter one with `days`. The window actually served is always echoed back
+        as `data.days`; read it from there rather than assuming a length.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: |
+            Days of history to return, ending today (UTC). Clamped to
+            `[1, <your plan's analytics history>]`, so a value above your plan's
+            window returns that window rather than an error. Omit for the whole
+            window.
+          schema: { type: integer, minimum: 1 }
+          example: 30
+      responses:
+        '200':
+          description: The daily click series.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClickSeriesEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /domains:
+    get:
+      tags: [Domains]
+      summary: List custom domains
+      operationId: listDomains
+      description: |
+        The caller's connected custom domains, newest first, paginated. 404 if
+        the domains feature is disabled. `hasMore: true` means more rows exist
+        past this page — fetch again with `offset` advanced by `limit`.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of domains to return. Clamped to `[1, 200]`.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          description: Rows to skip, for the next page.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: domain
+          in: query
+          required: false
+          description: Case-insensitive substring filter on the domain name.
+          schema: { type: string }
+          example: mysite
+      responses:
+        '200':
+          description: A page of connected domains.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainsListEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Domains]
+      summary: Connect a custom domain
+      operationId: connectDomain
+      description: |
+        Connect a domain to one of your pages (status `pending` until registration
+        completes). Up to a per-user cap. 404 if the feature is disabled. Domain
+        purchase/registration is session-only and not exposed here.
+
+        A `pending` connection reserves nothing: a name is held only once someone has
+        paid for it, so several callers may queue on the same domain and race to buy
+        it. `409` means you already have that domain in your own list; `403` means
+        somebody else has already bought it.
+
+        Returns `503` while an administrator has custom-domain connection switched
+        off site-wide. Listing, rebinding and disconnecting are unaffected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConnectDomainRequest' }
+      responses:
+        '201':
+          description: Domain connected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainConnectionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Refused: either the per-user connected-domain cap is reached, or the
+            domain has already been bought by another account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Domains feature disabled, or the target page was not found / not owned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /domains/search:
+    get:
+      tags: [Domains]
+      summary: Search domain availability
+      operationId: searchDomains
+      description: |
+        Search domain availability and pricing for a query. Returns
+        `{ configured, query, results }`; `configured:false` when domain search isn't
+        set up. Prices shown are the price you'd pay. 404 if the feature is off, and
+        `503` while an administrator has domain registration switched off site-wide.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The domain or label to search for.
+          schema: { type: string }
+          example: mycoolsite
+      responses:
+        '200':
+          description: Search results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainSearchEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: The registrar is temporarily unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /domains/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DomainId'
+    patch:
+      tags: [Domains]
+      summary: Rebind a domain to a different page
+      operationId: rebindDomain
+      description: "Repoint a domain you own at a different page, or pass `pageId: null` to unbind."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RebindDomainRequest' }
+      responses:
+        '200':
+          description: Domain rebound.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainConnectionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [Domains]
+      summary: Disconnect a domain
+      operationId: disconnectDomain
+      description: Remove a domain connection you own.
+      responses:
+        '200':
+          description: Domain disconnected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DomainDeletedEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /account:
+    get:
+      tags: [Account]
+      summary: Get account, limits, and usage
+      operationId: getAccount
+      description: |
+        Return your plan, your current limits, and your usage (handy to check before
+        uploading). Read-only; only ever your own figures.
+      responses:
+        '200':
+          description: Account snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /account/members:
+    get:
+      tags: [Team]
+      summary: List team members
+      operationId: listTeamMembers
+      description: |
+        List the collaborators on your own account, plus your current seat usage.
+        An `invited` seat is reserved until the invitee accepts. Read-only, and
+        only ever your own account's roster.
+
+        Accepting an invite is **not** available through the API: it requires the
+        invitee's own signed-in, email-confirmed identity, so acceptance stays an
+        in-browser flow.
+      responses:
+        '200':
+          description: Your team roster and seat usage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamMembersEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    post:
+      tags: [Team]
+      summary: Invite a team member
+      operationId: inviteTeamMember
+      description: |
+        Invite a collaborator to your account by email, reserving a seat and
+        emailing them an accept link. `role` must be `admin`, `member`, or `viewer`
+        (never `owner`). Subject to your plan's seat cap and to a per-account
+        invite-email budget (see `429`). The invite token is emailed to the invitee
+        and is never returned in the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InviteMemberRequest' }
+      responses:
+        '200':
+          description: The invited collaborator (an `invited` seat).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamMemberEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: |
+            Your plan's team-seat limit is full, or your plan doesn't grant API
+            access.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: That collaborator is already invited or on the team.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            The per-key write limit or the per-account invite-email budget was
+            exceeded. Includes a `Retry-After` header.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /account/members/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MemberId'
+    delete:
+      tags: [Team]
+      summary: Revoke a team member
+      operationId: revokeTeamMember
+      description: |
+        Revoke a collaborator (or a still-pending invite) on your account, freeing
+        their seat and emailing them a notice. An unknown, already-revoked, or
+        not-yours member id returns `404`.
+      responses:
+        '200':
+          description: The member was revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RevokeMemberEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [Team]
+      summary: Change a team member's role
+      operationId: updateTeamMemberRole
+      description: |
+        Change an existing collaborator's role (promote or demote) without
+        revoke-and-re-invite. `role` must be `admin`, `member`, or `viewer`
+        (never `owner`). Only a non-revoked member (invited or active) can be
+        re-roled; an unknown, revoked, or not-yours member id returns `404`.
+        Changing a role does not affect seat usage and sends no email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMemberRoleRequest' }
+      responses:
+        '200':
+          description: The collaborator with their updated role.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamMemberEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /account/members/{id}/resend:
+    parameters:
+      - $ref: '#/components/parameters/MemberId'
+    post:
+      tags: [Team]
+      summary: Resend a pending invite
+      operationId: resendTeamInvite
+      description: |
+        Re-send the accept-link email for a **pending** invite, rotating its token
+        and 7-day expiry. Only a `status: invited` member can be resent: an
+        accepted, revoked, unknown, or not-yours id returns `404`. A per-invite
+        60-second cooldown returns `429` with a `Retry-After` header and a
+        machine-readable `{ reason: cooldown, retryAfterSeconds }` body so a client
+        can show a countdown. Also subject to the per-account invite-email budget.
+      responses:
+        '200':
+          description: The invite was resent (token rotated).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TeamMemberEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: |
+            The per-invite resend cooldown (60s), the per-account invite-email
+            budget, or the per-key write limit was hit. Includes a `Retry-After`
+            header; the cooldown case additionally returns `reason: cooldown` and
+            `retryAfterSeconds`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResendCooldownError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  # ---------------------------------------------------------------------------
+  # AI connectors: OAuth 2.1 authorization server + MCP endpoint.
+  #
+  # Everything below lives OUTSIDE /api/v1 — at the site origin itself, not the
+  # `servers:` base URL every path above is relative to — so each path item
+  # overrides `servers` to the bare origin. None of it uses ApiKeyAuth/BearerAuth
+  # (the REST API's credential); the OAuth endpoints are public/unauthenticated
+  # by design (each spec'd RFC says so), and the MCP endpoint alone takes an
+  # OAuth access token (see the OAuth2 security scheme below) — API keys are
+  # never accepted there, and OAuth tokens are never accepted by /api/v1.
+  # See docs/connectors.md for the human-friendly guide this mirrors.
+  # ---------------------------------------------------------------------------
+
+  /.well-known/oauth-authorization-server:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    get:
+      tags: [AI connectors]
+      summary: Authorization server metadata
+      operationId: oauthAuthorizationServerMetadata
+      security: []
+      description: |
+        RFC 8414 authorization server metadata. Public, unauthenticated, and
+        derived entirely from server-side constants: safe to cache and safe to
+        fetch cross-origin before a client holds any credential at all.
+      responses:
+        '200':
+          description: Authorization server metadata.
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=3600' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthAuthorizationServerMetadata' }
+
+  /.well-known/oauth-protected-resource:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    get:
+      tags: [AI connectors]
+      summary: Protected resource metadata (MCP endpoint)
+      operationId: oauthProtectedResourceMetadata
+      security: []
+      description: |
+        RFC 9728 protected resource metadata for the MCP endpoint. Public,
+        unauthenticated. Identical body to the path-insertion form below:
+        some clients probe this bare path unconditionally regardless of the
+        resource's own path shape.
+      responses:
+        '200':
+          description: Protected resource metadata.
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=3600' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthProtectedResourceMetadata' }
+
+  /.well-known/oauth-protected-resource/api/mcp:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    get:
+      tags: [AI connectors]
+      summary: Protected resource metadata (RFC 9728 §3.1 path-insertion form)
+      operationId: oauthProtectedResourceMetadataMcp
+      security: []
+      description: |
+        Same document as `/.well-known/oauth-protected-resource`, also served
+        at the RFC 9728 §3.1 path-insertion location for a resource whose own
+        path is `mcp`-shaped.
+      responses:
+        '200':
+          description: Protected resource metadata (identical to the bare path).
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=3600' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthProtectedResourceMetadata' }
+
+  /api/oauth/register:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    post:
+      tags: [AI connectors]
+      summary: Register an OAuth client
+      operationId: oauthRegisterClient
+      security: []
+      description: |
+        RFC 7591 Dynamic Client Registration. Public and unauthenticated by
+        design: this is how a new MCP client (Claude, ChatGPT, an IDE agent,
+        or any other OAuth-speaking connector) gets a `client_id` before it has
+        ever talked to a real user.
+
+        Every client registered here is public and untrusted: no
+        `client_secret` is ever issued (`token_endpoint_auth_method` is always
+        `none`, the only value this server accepts), and the `/oauth/authorize`
+        consent screen always runs for it, every time. Rate-limited to 10
+        registrations per hour per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OAuthClientRegistrationRequest' }
+      responses:
+        '201':
+          description: Client registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthClientRegistrationResponse' }
+        '400':
+          description: |
+            The request body was not a JSON object, or client metadata failed
+            validation: error is one of `invalid_client_metadata` (missing
+            `client_name`, `redirect_uris` not a non-empty string array,
+            `scope` not a string, `grant_types`/`response_types` not a string
+            array, or an unsupported `token_endpoint_auth_method`; only
+            `"none"` is accepted), or `invalid_redirect_uri` (a `redirect_uris`
+            entry is malformed, uses an unsupported scheme, or there are too
+            many).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+              example: { error: invalid_client_metadata, error_description: '"client_name" is required' }
+        '429': { $ref: '#/components/responses/OAuthRateLimited' }
+        '500': { $ref: '#/components/responses/OAuthServerError' }
+
+  /oauth/authorize:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    get:
+      tags: [AI connectors]
+      summary: Authorization endpoint (consent screen)
+      operationId: oauthAuthorize
+      security: []
+      description: |
+        RFC 6749 §4.1.1 authorization endpoint: this is what an OAuth client
+        redirects the user's browser to. Not a JSON API: it renders an HTML
+        page.
+
+        - If `client_id` or `redirect_uri` can't be verified against a
+          registered client, it renders an inline error page directly (there
+          is nowhere safe to redirect to).
+        - Otherwise, if the visitor isn't signed in to upload.tf, it sends them
+          to sign in first, then back here.
+        - Once signed in, it renders a consent screen naming the client and
+          the scopes it's requesting. The visitor's Allow/Deny decision is
+          submitted via a same-origin form POST (not a public API, see
+          `POST /api/oauth/authorize` below), which redirects the browser back
+          to `redirect_uri` with either `?code=…&state=…` (RFC 6749 §4.1.2) or
+          `?error=…&error_description=…&state=…` (§4.1.2.1).
+        - If the signed-in account has not confirmed its email address, the
+          consent screen explains that instead of offering Allow/Deny. No
+          authorization code is issued until the address is confirmed.
+
+        PKCE (`code_challenge` + `code_challenge_method=S256`) is **mandatory**:
+        `plain` is rejected outright, and a request missing PKCE fields
+        never reaches a consent screen.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: A `client_id` returned by `POST /api/oauth/register`.
+        - name: redirect_uri
+          in: query
+          required: true
+          schema: { type: string, format: uri }
+          description: Must EXACTLY match one of the client's registered redirect URIs (no prefix or normalization matching).
+        - name: response_type
+          in: query
+          required: true
+          schema: { type: string, enum: [code] }
+        - name: scope
+          in: query
+          required: true
+          schema: { type: string, example: 'sites:read sites:write' }
+          description: Space-delimited scopes, from `sites:read` / `sites:write`. At least one is required.
+        - name: code_challenge
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+          description: RFC 7636 PKCE code challenge, unpadded base64url SHA-256 digest of the verifier (always 43 characters).
+        - name: code_challenge_method
+          in: query
+          required: true
+          schema: { type: string, enum: [S256] }
+          description: Only `S256` is supported; `plain` is rejected.
+        - name: state
+          in: query
+          required: false
+          schema: { type: string }
+          description: Opaque value echoed back on both success and error redirects. Strongly recommended (CSRF protection); omitted entirely from the redirect if not sent.
+        - name: resource
+          in: query
+          required: false
+          schema: { type: string, format: uri }
+          description: RFC 8707 resource indicator, an absolute, fragment-free URI identifying the resource server the token should be bound to (e.g. the MCP endpoint). Binds the eventually-minted token's audience.
+      responses:
+        '200':
+          description: Consent screen, or an inline error page when `client_id` was absent, or `client_id`/`redirect_uri` could not be verified.
+          content:
+            text/html: {}
+        '302':
+          description: |
+            Redirect back to `redirect_uri`: either the visitor was already
+            signed in and this is the terminal response of a Deny (RFC 6749
+            §4.1.2.1, `error=access_denied`), or `redirect_uri` was verified
+            but another parameter failed validation (`invalid_request`,
+            `invalid_scope`, or `invalid_target` for a malformed `resource`).
+        '303':
+          description: Redirect to `/auth?next=…` to sign in first, then back to this same authorize request.
+
+  /api/oauth/authorize:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    post:
+      tags: [AI connectors]
+      summary: Consent decision (internal, not a public integration point)
+      operationId: oauthAuthorizeDecision
+      security: []
+      description: |
+        The endpoint `GET /oauth/authorize`'s consent screen's Allow/Deny
+        buttons submit to, as a same-origin HTML form POST carrying the user's
+        active session cookie. This is **not** a surface external OAuth
+        clients call directly: a real integration only ever redirects the
+        browser to `GET /oauth/authorize` and receives the result on its own
+        `redirect_uri`; documented here only because it's a real, reachable
+        endpoint.
+
+        Rejects any request whose origin isn't this same site. Every field is
+        re-validated from scratch: nothing about a prior GET render is
+        trusted. On success (`decision=allow`), mints a single-use, 60-second
+        authorization code and redirects to `redirect_uri` with `?code=…`; on
+        `decision=deny`, redirects with `?error=access_denied`. An account whose
+        email address is not yet confirmed is never issued a code, whichever
+        button was pressed.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [client_id, redirect_uri, response_type, scope, code_challenge, code_challenge_method, decision]
+              properties:
+                client_id: { type: string }
+                redirect_uri: { type: string, format: uri }
+                response_type: { type: string, enum: [code] }
+                scope: { type: string }
+                code_challenge: { type: string }
+                code_challenge_method: { type: string, enum: [S256] }
+                state: { type: string }
+                resource: { type: string, format: uri }
+                decision:
+                  type: string
+                  enum: [allow, deny]
+                  description: Which button the visitor pressed.
+      responses:
+        '302':
+          description: Redirect to `redirect_uri` with `?code=…&state=…` (allow) or `?error=access_denied&state=…` (deny), or with an OAuth error if a re-validated field turned out invalid.
+        '303':
+          description: Bounced back to `GET /oauth/authorize` (a render-error field, or the signed-in account has not confirmed its email address — the consent screen then explains how to finish) or to `/auth` (the session expired between the GET render and this POST).
+        '403':
+          description: The request did not originate from this same site.
+          content:
+            text/plain: { schema: { type: string, example: Forbidden } }
+
+  /api/oauth/token:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    post:
+      tags: [AI connectors]
+      summary: Token endpoint
+      operationId: oauthToken
+      security: []
+      description: |
+        RFC 6749 §3.2 token endpoint. Body is `application/x-www-form-urlencoded`
+        per the RFC, not this API's own JSON convention. Supports two grant
+        types (`grant_type` selects which field set is required):
+
+        - `authorization_code`: exchange a code from `/oauth/authorize` for a
+          token pair. Requires `code`, `redirect_uri`, `client_id`, and the
+          PKCE `code_verifier` (43–128 chars). A code is single-use and
+          expires after 60 seconds.
+        - `refresh_token`: exchange a refresh token for a new pair. Requires
+          `refresh_token`. Rotates on every use: presenting an already-used
+          refresh token revokes every live token (access and refresh) sharing
+          its family, since it can no longer be told apart from a stolen copy
+          being replayed.
+
+        Response is never cached (`Cache-Control: no-store`).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/OAuthTokenRequest' }
+      responses:
+        '200':
+          description: A fresh access + refresh token pair.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthTokenResponse' }
+        '400':
+          description: |
+            `invalid_request`: a required field for the given `grant_type` is
+            missing, or `grant_type` itself is neither `authorization_code`
+            nor `refresh_token` (`unsupported_grant_type`). `invalid_grant`:
+            the code/refresh token is unknown, expired, already used, or its
+            `client_id`/`redirect_uri`/PKCE `code_verifier` doesn't match (RFC
+            6749 §5.2 deliberately does not distinguish which, so a caller
+            probing this endpoint can't learn which check failed).
+            `invalid_scope` / `invalid_target`: the redeemed grant's scope or
+            resource can no longer be minted as-is.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+              example: { error: invalid_grant }
+        '429': { $ref: '#/components/responses/OAuthRateLimited' }
+        '500': { $ref: '#/components/responses/OAuthServerError' }
+
+  /api/oauth/revoke:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    post:
+      tags: [AI connectors]
+      summary: Revocation endpoint
+      operationId: oauthRevoke
+      security: []
+      description: |
+        RFC 7009 token revocation. Public and unauthenticated: a bearer token
+        IS the credential (§2.1 explicitly allows a public client to call this
+        without further authentication). Accepts either an access or a
+        refresh token, and revokes the whole GRANT that token belongs to, as
+        §2.1 asks: every access and refresh token descended from the same
+        authorization, across every rotation. Revoking an access token
+        therefore also kills the refresh token that could have minted a
+        replacement. It stops at that grant — a separate authorization by the
+        same user for the same client is untouched.
+
+        Per §2.2, the response is IDENTICAL (`200`, empty body) whether the
+        token existed, was already revoked, or never existed at all: telling
+        those apart would turn this endpoint into an oracle for probing which
+        tokens are live. Only a structurally malformed request (no `token`
+        field) gets a different response.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: An access or refresh token to revoke. }
+      responses:
+        '200':
+          description: The grant was revoked, was already revoked/unknown, or never existed; all three look identical.
+          headers:
+            Cache-Control: { schema: { type: string, example: no-store } }
+        '400':
+          description: The `token` field was missing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+              example: { error: invalid_request, error_description: '"token" is required' }
+        '429': { $ref: '#/components/responses/OAuthRateLimited' }
+
+  /api/mcp:
+    servers: [{ url: https://upload.tf, description: Site origin (not under /api/v1) }]
+    post:
+      tags: [AI connectors]
+      summary: MCP endpoint
+      operationId: mcpEndpoint
+      security:
+        - OAuth2: [sites:read]
+        - OAuth2: [sites:read, sites:write]
+      description: |
+        The Model Context Protocol (MCP) endpoint an AI connector talks to:
+        JSON-RPC 2.0 over **stateless** Streamable HTTP (one request in, one
+        response out; no persistent connection or session state). Authenticate
+        with `Authorization: Bearer <access_token>` using a token minted by
+        `POST /api/oauth/token` above. The token's audience (if the client sent
+        a `resource` at authorization) is bound to this endpoint, and access is
+        gated on the account's **connector access** entitlement, separate
+        from, and available on every plan including Free, unlike the
+        `/api/v1` REST surface's paid-only **API access** entitlement (see
+        `Forbidden` below and docs/connectors.md's "Access requirements").
+
+        Supported JSON-RPC methods: `initialize`, `ping`, `tools/list`,
+        `tools/call`. `tools/list` returns five tools: `publish_website`,
+        `confirm_publish`, `list_websites`, `get_website`, `delete_website`,
+        each with its own JSON Schema, which is the authoritative contract for
+        its arguments (see docs/connectors.md for a plain-language summary).
+
+        JSON-RPC's method-dispatched, polymorphic request/response shape isn't
+        a good fit for OpenAPI's per-operation schema model, so the body below
+        is intentionally left generic rather than forcing a fake, misleading
+        schema onto it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A single JSON-RPC 2.0 request/notification object, or a batch (array) of them.
+              required: [jsonrpc]
+              properties:
+                jsonrpc: { type: string, enum: ['2.0'] }
+                id:
+                  description: Required on a request; absent on a notification (which gets no response).
+                  oneOf: [{ type: string }, { type: number }]
+                method: { type: string, example: tools/call }
+                params: { type: object }
+      responses:
+        '200':
+          description: A JSON-RPC 2.0 response (or batch of responses); success and protocol-level errors (unknown method, bad params) both return `200` per JSON-RPC convention; only a tool's OWN failure is reported inside a successful envelope via `result.isError`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jsonrpc: { type: string, enum: ['2.0'] }
+                  id:
+                    description: A request's own id, echoed back, or JSON `null` for an error response so malformed its id couldn't be determined (OpenAPI 3.0 cannot itself express that third, null case here).
+                    oneOf: [{ type: string }, { type: number }]
+                  result: { type: object }
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        description: 'Standard JSON-RPC 2.0 error code (§5.1): e.g. -32700 (parse error), -32601 (method not found), -32602 (invalid params).'
+                      message: { type: string }
+        '401':
+          description: No bearer token was presented, or it's invalid, expired, revoked, or bound to a different resource audience.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+        '403':
+          description: The token is valid, but the account's plan does not currently grant connector access.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Your API key (prefixed `utf_`) in the `x-api-key` header.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: utf
+      description: |
+        Your API key (prefixed `utf_`) as a Bearer token:
+        `Authorization: Bearer utf_…`.
+    OAuth2:
+      type: oauth2
+      description: |
+        OAuth 2.1 (Authorization Code + mandatory PKCE) issued by this site's
+        own authorization server (see the AI connectors paths below and
+        docs/connectors.md). An OAuth access token is a Bearer token shaped
+        like an API key (`utf_at_…`), but the two are never interchangeable.
+        A token is bound to the resource it was minted for: `/api/mcp` (AI
+        connectors) or `/api/v1` (signed-in desktop apps, accepted only by the
+        operations that list `OAuth2`; see **Desktop apps** above).
+      flows:
+        authorizationCode:
+          authorizationUrl: https://upload.tf/oauth/authorize
+          tokenUrl: https://upload.tf/api/oauth/token
+          refreshUrl: https://upload.tf/api/oauth/token
+          scopes:
+            'sites:read': View your pages/sites.
+            'sites:write': Create, edit, and delete your pages/sites.
+
+  parameters:
+    PageSlug:
+      name: slug
+      in: path
+      required: true
+      description: A page's immutable id **or** its public name (subdomain label).
+      schema:
+        type: string
+      example: mysite
+    FilePath:
+      name: path
+      in: path
+      required: true
+      description: |
+        A file's path inside the hosted site, relative to its root: nested
+        files live under a `/`-separated path, e.g. `assets/app.js`.
+
+        **The canonical, spec-correct form single-segment-encodes the whole
+        path**: `PUT /pages/mysite/files/assets%2Fapp.js`. OpenAPI 3.0.3 defines
+        `in: path` as occupying exactly one URL segment, so `%2F`-encoding the
+        entire value is what this specification actually describes, and what an
+        encoding-aware generated client emits unmodified. This is a known
+        expressiveness gap in OpenAPI 3.0: the alternative (RFC 6570 reserved
+        expansion, `{+path}`, which would let a path parameter formally span
+        multiple segments) is not available before OpenAPI 3.1.
+
+        As a leniency for hand-written clients, literal unencoded slashes are
+        also accepted: `PUT /pages/mysite/files/assets/app.js` resolves to the
+        identical file, since the route matcher decodes each `/`-delimited
+        segment independently before rejoining them into the path value. This
+        leniency depends on nothing in front of the app (a CDN, WAF, or reverse
+        proxy) normalizing or rejecting encoded slashes before the request
+        arrives; if yours does, use the canonical single-segment form.
+      schema:
+        type: string
+      example: assets/app.js
+    LinkId:
+      name: id
+      in: path
+      required: true
+      description: A short link's id.
+      schema:
+        type: string
+      example: 7f3c1a2e-2d4b-4a9f-9e21-0b8c5a1d3e4f
+    DomainId:
+      name: id
+      in: path
+      required: true
+      description: A connected domain's id.
+      schema:
+        type: string
+      example: d1e2f3a4-5b6c-7d8e-9f0a-1b2c3d4e5f6a
+    MemberId:
+      name: id
+      in: path
+      required: true
+      description: A team member's row id (never an account or owner id).
+      schema:
+        type: string
+      example: b3f1c2d4-5678-4abc-9def-0123456789ab
+
+  schemas:
+    UploadCreateForm:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: >-
+            Any file type the site accepts (documents, images, video, audio,
+            `.html`, a `.zip`, …); the kind comes from the file. Up to your plan's
+            per-file limit (see /pricing), and never more than 50 MB through this
+            endpoint, which buffers the request body. A `.zip` sent with `host=true` is also
+            held to the hosted-site limits of your plan, which no plan raises past
+            50 MB compressed, 40 MB uncompressed, 500 files, 20 MB per file.
+        name:
+          $ref: '#/components/schemas/SubdomainName'
+        subdomain:
+          allOf:
+            - $ref: '#/components/schemas/SubdomainName'
+          description: Alias for `name` (first present of name/subdomain/domain wins).
+        domain:
+          allOf:
+            - $ref: '#/components/schemas/SubdomainName'
+          description: Alias for `name` (first present of name/subdomain/domain wins).
+        host:
+          type: string
+          enum: ['1', 'true']
+          description: |
+            Set to `1` or `true` to extract a `.zip` and serve it as a site.
+            Ignored for non-zip uploads.
+
+    UploadUpdateForm:
+      type: object
+      required: [file]
+      description: |
+        Like the create form, but one of `name` / `subdomain` / `domain` is
+        **required** and must identify an existing page you own.
+      properties:
+        file:
+          type: string
+          format: binary
+          description: The replacement `.html` file or `.zip` static site.
+        name:
+          $ref: '#/components/schemas/SubdomainName'
+        subdomain:
+          allOf:
+            - $ref: '#/components/schemas/SubdomainName'
+          description: Alias for `name` (first present of name/subdomain/domain wins).
+        domain:
+          allOf:
+            - $ref: '#/components/schemas/SubdomainName'
+          description: Alias for `name` (first present of name/subdomain/domain wins).
+        host:
+          type: string
+          enum: ['1', 'true']
+          description: Set to `1` or `true` to re-host the replacement `.zip` as a site.
+
+    SubdomainName:
+      type: string
+      minLength: 3
+      maxLength: 32
+      pattern: '^[a-z0-9-]{3,32}$'
+      description: |
+        Desired subdomain label, e.g. `mysite` → `https://mysite.upload.tf`.
+        Lowercase `a–z 0–9 -`, 3–32 chars, no leading/trailing or consecutive
+        hyphens. Reserved and brand-impersonation names are rejected.
+      example: mysite
+
+    RenamePageRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          $ref: '#/components/schemas/SubdomainName'
+
+    CreateLinkRequest:
+      type: object
+      description: |
+        Exactly one of `url` or `page` is required; sending both is a 400.
+        `url` shortens an arbitrary public `http(s)` destination. `page` binds the
+        link to one of your own pages: it then follows the page's current address
+        and is deleted together with the page.
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: >-
+            Absolute `http(s)` destination to shorten. Mutually exclusive with `page`.
+          example: https://example.com/a/very/long/path
+        page:
+          type: string
+          description: >-
+            Bind the link to one of your own pages, by its id **or** its public name
+            (the `slug` returned on upload). The link follows the page's current
+            address and is deleted with the page. Mutually exclusive with `url`. A page
+            that does not exist or is not yours answers 404.
+          example: mysite
+        name:
+          type: string
+          maxLength: 80
+          description: >-
+            Optional private label (up to 80 characters, no control characters), for
+            example the recipient or campaign. Only you can see it; it is never shown
+            to visitors. Blank is treated as no name.
+          example: Client A
+        code:
+          $ref: '#/components/schemas/LinkCode'
+        expiry:
+          $ref: '#/components/schemas/ExpiryOption'
+
+    UpdateLinkRequest:
+      type: object
+      minProperties: 1
+      description: At least one field must be present.
+      properties:
+        disabled:
+          type: boolean
+          description: Pause (`true`) or resume (`false`) the link. Always allowed.
+        name:
+          type: string
+          maxLength: 80
+          nullable: true
+          description: >-
+            Rename the link's private label (up to 80 characters). `null` or blank
+            clears it. Always allowed, on every plan.
+          example: Client A
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: >-
+            Repoint the link to a new destination (paid plans only). Not allowed for a
+            link bound to a page, which always follows its page (400).
+        expiry:
+          allOf:
+            - $ref: '#/components/schemas/ExpiryOption'
+          description: Change or clear the expiry (paid plans only).
+
+    BulkDeletePagesRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+          description: Page ids to delete. Ids you don't own are ignored.
+          example: ['a1b2c3d4', 'e5f6g7h8']
+
+    BulkLinkActionRequest:
+      type: object
+      required: [ids, action]
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+          description: Short-link ids to act on. Ids you don't own are ignored.
+        action:
+          type: string
+          enum: [disable, enable, delete]
+          description: The action to apply to every listed link.
+
+    ClickPoint:
+      type: object
+      required: [day, clicks]
+      properties:
+        day:
+          type: string
+          format: date
+          description: UTC day (YYYY-MM-DD).
+          example: '2026-06-25'
+        clicks:
+          type: integer
+          description: Clicks recorded on that day.
+          example: 7
+
+    DisplayMode:
+      type: string
+      enum: [preview, preview_download, download]
+      description: How a renderable single-file page is shown to visitors.
+
+    SetDisplayModeRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/DisplayMode'
+
+    SetPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 6
+          maxLength: 72
+          description: The link password (6–72 chars).
+          example: a-strong-passphrase
+
+    SetEmailGateRequest:
+      type: object
+      minProperties: 1
+      description: Omitted fields are left unchanged.
+      properties:
+        enabled:
+          type: boolean
+          description: Turn the gate on/off. Activating requires the emailCapture entitlement.
+        message:
+          type: string
+          maxLength: 200
+          nullable: true
+          description: Owner prompt shown to visitors (sanitized, ≤200 chars). Null/empty clears it.
+        consentRequired:
+          type: boolean
+          description: Whether the visitor must tick a consent checkbox.
+
+    EmailCapture:
+      type: object
+      required: [id, email, capturedAt]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        capturedAt: { type: string, format: date-time }
+
+    ConnectDomainRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+          description: The domain to connect (e.g. example.com).
+          example: example.com
+        pageId:
+          type: string
+          nullable: true
+          description: Optional page id to bind the domain to (must be one you own).
+
+    RebindDomainRequest:
+      type: object
+      properties:
+        pageId:
+          type: string
+          nullable: true
+          description: The page id to repoint to, or null to unbind.
+
+    DomainConnection:
+      type: object
+      description: >-
+        A custom domain on your account. `connectionKind` says how it was acquired:
+        `purchased` (registered through upload.tf, ownership implicit, served through
+        its own zone) or `byo` (registered elsewhere, must prove ownership with a DNS
+        TXT record and point a CNAME at us before it serves). Every field is always
+        present; fields that do not apply to a connection's kind are `null` (or the
+        documented fixed value), never omitted. New enum values may be added over
+        time, so treat an unrecognised value as "not yet known" rather than an error.
+      required: [id, domain, pageId, status, statusLabel, createdAt, expiresAt, renewalStatus, graceUntil, connectionKind, connectionKindLabel, verificationStatus, verificationTxtHost, verificationToken, verifiedAt, verificationGraceUntil, lastVerificationError, registeredAt, provisioningStatus, hostnameError, hostnameCheckedAt, boundLabels]
+      properties:
+        id: { type: string }
+        domain: { type: string }
+        pageId: { type: string, nullable: true, description: 'The bound page id, or null if unbound.' }
+        status:
+          type: string
+          enum: [pending, registering, active, failed, expired]
+          description: >-
+            Lifecycle status. Only `active` serves. A purchased domain moves
+            `pending` → `registering` → `active` (or `failed`), and `expired` once its
+            term ends unrenewed. A bring-your-own domain stays `pending` until it is
+            verified AND its custom hostname is live, then becomes `active`; it
+            returns to `pending` if either is lost.
+        statusLabel: { type: string, description: Human-friendly status label. }
+        createdAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a purchased domain's registration term ends. Always null for a bring-your-own domain.
+        renewalStatus:
+          type: string
+          enum: [paid, grace, lapsed, cancelled]
+          description: >-
+            Renewal-billing state of a purchased domain. `paid` serves normally;
+            `grace` means a payment was missed and the domain keeps serving until
+            `graceUntil`; `lapsed` means grace ended and it has stopped serving;
+            `cancelled` serves until `expiresAt`. A bring-your-own domain is never
+            billed by us and reads `paid`.
+        graceUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a `grace` renewal period ends; null outside grace.
+        connectionKind:
+          type: string
+          enum: [purchased, byo]
+          description: How the domain was acquired — see the schema description.
+        connectionKindLabel: { type: string, description: 'Human-friendly connection kind label (e.g. "Bring your own").' }
+        verificationStatus:
+          type: string
+          enum: [unverified, verified, grace, revoked]
+          description: >-
+            Ownership verification state of a bring-your-own domain: `unverified`
+            until the TXT record is first found; `verified`; `grace` after a later
+            check stopped finding it (still serving until `verificationGraceUntil`);
+            `revoked` once grace ran out or another account proved ownership. Always
+            `verified` for a purchased domain.
+        verificationTxtHost:
+          type: string
+          nullable: true
+          description: 'The DNS name to publish the TXT record at (`_uptf-verify.<domain>`). Null for a purchased domain.'
+          example: _uptf-verify.www.example.com
+        verificationToken:
+          type: string
+          nullable: true
+          description: The exact TXT record value to publish at `verificationTxtHost`. Null for a purchased domain.
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the domain FIRST passed verification. Kept through any later grace or revocation.
+        verificationGraceUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: When an open verification grace window ends; null outside grace.
+        lastVerificationError:
+          type: string
+          nullable: true
+          description: >-
+            Why the last ownership check did not pass, as a short machine code —
+            `no_txt_found`, `mismatch`, or a DNS-resolver reason when the answer
+            was inconclusive. Null after a passing check.
+          example: no_txt_found
+        registeredAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the registry confirmed a purchased domain's registration. Always null for a bring-your-own domain.
+        provisioningStatus:
+          type: string
+          enum: [idle, waiting, live, stalled]
+          description: >-
+            Where a bring-your-own domain's custom hostname stands. `idle` — none
+            wanted or present yet (always `idle` for a purchased domain); `waiting`
+            — created, waiting for your CNAME and the certificate; `live` — hostname
+            and certificate active; `stalled` — it cannot progress without action,
+            and `hostnameError` says why.
+        hostnameError:
+          type: string
+          nullable: true
+          enum:
+            - dns_timeout
+            - dns_moved
+            - ssl_failed
+            - blocked
+            - hostname_in_use
+            - hostname_expired
+            - hostname_missing
+            - taken
+            - ownership_revoked
+            - capacity
+            - csam_coverage_unconfirmed
+          description: >-
+            Why a bring-your-own domain's hostname is not live, as a machine code.
+            Your side to fix: `dns_timeout` (the CNAME never appeared), `dns_moved`
+            (it no longer points at us), `ssl_failed` (the certificate could not be
+            issued — often a CAA record), `hostname_expired` (it stayed pending too
+            long), `hostname_missing` (the hostname no longer exists; checking again
+            creates a new one), `ownership_revoked` (the TXT record was lost). Not
+            yours to fix: `blocked`, `hostname_in_use`, `taken` (another account
+            holds the name live), `capacity` and `csam_coverage_unconfirmed`
+            (upload.tf cannot create hostnames right now). Always null for a
+            purchased domain.
+        hostnameCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the custom hostname was last checked. Always null for a purchased domain.
+        boundLabels:
+          type: array
+          items: { type: string }
+          description: >
+            The labels on this domain that have a page bound, sorted, with the apex
+            as the empty string. `pageId` alone does not say whether the domain
+            serves: a page can be bound to (domain, label) while `pageId` is still
+            null, and that binding is what a visitor resolves against. A domain with
+            neither returns 404 to every visitor however connected it looks.
+
+    DomainSearchResult:
+      type: object
+      required: [domain, available, priceUsd, premium]
+      properties:
+        domain: { type: string }
+        available: { type: boolean }
+        priceUsd:
+          type: number
+          nullable: true
+          description: Annual price in USD, or null if not quoted.
+        premium: { type: boolean, description: Registry-premium name (typically pricier). }
+
+    LinkCode:
+      type: string
+      pattern: '^[0-9A-Za-z]{3,32}$'
+      minLength: 3
+      maxLength: 32
+      description: |
+        Optional custom short code: 3–32 base62 characters. Reserved words are
+        rejected. Omit to auto-generate a 5-character code.
+      example: promo24
+
+    ExpiryOption:
+      type: string
+      enum: [never, 1d, 7d, 30d, 90d]
+      description: Expiry preset. `never` means the link does not expire.
+      example: 30d
+
+    ApiPage:
+      type: object
+      description: Public projection of a hosted page or site.
+      required:
+        - id
+        - name
+        - url
+        - fileName
+        - kind
+        - sizeBytes
+        - fileCount
+        - createdAt
+        - expiresAt
+        - chatEnabled
+      properties:
+        id:
+          type: string
+          description: Immutable page id (stable across renames).
+          example: a1b2c3d4
+        name:
+          type: string
+          nullable: true
+          description: Public custom name (subdomain label), or null for an id-only link.
+          example: mysite
+        url:
+          type: string
+          format: uri
+          description: The live URL.
+          example: https://mysite.upload.tf
+        fileName:
+          type: string
+          example: index.html
+        kind:
+          type: string
+          description: '`site` for a hosted ZIP, otherwise the single-file type id (e.g. `html`, `zip`, `pdf`).'
+          example: site
+        sizeBytes:
+          type: integer
+          format: int64
+          example: 184320
+        fileCount:
+          type: integer
+          example: 12
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO expiry, or null = never expires.
+        chatEnabled:
+          type: boolean
+
+    ShortLink:
+      type: object
+      description: Owner-facing projection of a short link.
+      required:
+        - id
+        - code
+        - url
+        - shortUrl
+        - createdAt
+        - expiresAt
+        - disabled
+        - clicks
+      properties:
+        id:
+          type: string
+          example: 7f3c1a2e-2d4b-4a9f-9e21-0b8c5a1d3e4f
+        code:
+          type: string
+          description: The short code (custom or auto-generated).
+          example: ab12c
+        url:
+          type: string
+          format: uri
+          description: The destination the link points to.
+          example: https://example.com/a/very/long/path
+        shortUrl:
+          type: string
+          format: uri
+          description: The public short URL.
+          example: https://upl.tf/ab12c
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO expiry, or null = never expires.
+        disabled:
+          type: boolean
+          description: Whether the link is paused.
+        clicks:
+          type: integer
+          description: Number of redirects served.
+          example: 42
+        name:
+          type: string
+          nullable: true
+          maxLength: 80
+          description: Private label for the link, or null when unnamed.
+          example: Client A
+        pageId:
+          type: string
+          nullable: true
+          description: >-
+            The id of the page this link is bound to, or null for a plain URL link.
+            A page-bound link always redirects to the page's current public URL
+            (`url`), so it follows a slug rename, and it is deleted with its page.
+          example: k3j9x2m1
+
+    AccountInfo:
+      type: object
+      required: [plan, isAdmin, limits, usage]
+      properties:
+        plan:
+          type: string
+          description: The caller's plan id.
+          example: business
+        isAdmin:
+          type: boolean
+          description: Whether this is a staff account (false for normal accounts).
+        limits:
+          type: object
+          description: Your plan's current limits.
+          required:
+            - maxFileSizeMb
+            - accountStorageMb
+            - customLinks
+            - shortLinks
+            - retentionDays
+            - apiAccess
+          properties:
+            maxFileSizeMb:
+              type: integer
+              description: Maximum single-file upload size, in MB.
+              example: 5
+            accountStorageMb:
+              type: integer
+              description: Total account storage allowance, in MB.
+              example: 5120
+            customLinks:
+              type: integer
+              nullable: true
+              description: Max custom-named pages allowed (null = unlimited).
+            shortLinks:
+              type: integer
+              nullable: true
+              description: Max short links allowed (null = unlimited).
+            retentionDays:
+              type: integer
+              description: Page time-to-live cap, in days.
+              example: 30
+            apiAccess:
+              type: boolean
+              description: Whether your plan includes API access.
+        usage:
+          type: object
+          required: [pages, shortLinks, storageUsedBytes]
+          properties:
+            pages:
+              type: integer
+              description: Number of pages currently stored.
+            shortLinks:
+              type: integer
+              description: Number of short links currently created.
+            storageUsedBytes:
+              type: integer
+              format: int64
+              description: Total storage consumed, in bytes.
+
+    TeamMember:
+      type: object
+      description: |
+        A collaborator on your account. Never includes any invite token or hash,
+        nor internal owner/user identifiers.
+      required:
+        - id
+        - email
+        - role
+        - status
+        - createdAt
+        - inviteExpiresAt
+        - acceptedAt
+        - updatedAt
+        - seatLockedAt
+      properties:
+        id:
+          type: string
+          description: The member row id (use it to revoke or resend).
+          example: b3f1c2d4-5678-4abc-9def-0123456789ab
+        email:
+          type: string
+          format: email
+          description: The collaborator's email address.
+        role:
+          type: string
+          enum: [admin, member, viewer, owner]
+          description: |
+            The account role. `admin`, `member`, or `viewer` for a collaborator;
+            `owner` may appear for the account owner's own self-row.
+        status:
+          type: string
+          enum: [invited, active, revoked, expired]
+          description: |
+            `invited` (a reserved seat awaiting accept), `active` (accepted),
+            `revoked` (seat freed by owner/self), or `expired` (a pending
+            invite that lapsed past `inviteExpiresAt` and was lazily swept —
+            a terminal, non-occupying status freed exactly like `revoked`).
+        createdAt:
+          type: string
+          format: date-time
+        inviteExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a pending invite expires; null once accepted / not applicable.
+        acceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the invite was accepted; null while invited / revoked.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last lifecycle change; drives the resend-cooldown countdown.
+        seatLockedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a downgrade marked this seat over the plan limit; else null.
+
+    SeatUsage:
+      type: object
+      description: Seat occupancy for your account (the owner always holds one seat).
+      required: [used, total, remaining, canAdd]
+      properties:
+        used:
+          type: integer
+          description: Seats occupied, the owner (always 1) plus current collaborators.
+          example: 2
+        total:
+          type: integer
+          nullable: true
+          description: Total seats your plan allows; null = unlimited.
+          example: 3
+        remaining:
+          type: integer
+          nullable: true
+          description: Seats left before the cap; null = unlimited.
+          example: 1
+        canAdd:
+          type: boolean
+          description: Whether another collaborator can be added without exceeding the cap.
+
+    InviteMemberRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+          description: The collaborator's email address.
+          example: teammate@example.com
+        role:
+          type: string
+          enum: [admin, member, viewer]
+          description: The role to grant. Never `owner`.
+
+    UpdateMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member, viewer]
+          description: The new role to grant. Never `owner`.
+
+    ResendCooldownError:
+      type: object
+      description: |
+        The per-invite resend cooldown `429`: the standard error envelope plus a
+        machine-readable cooldown hint so a client can render a countdown. Other
+        `429`s on the resend endpoint use the plain error envelope.
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          description: Human-readable error message.
+        reason:
+          type: string
+          enum: [cooldown]
+          description: Present only on the per-invite cooldown case.
+        retryAfterSeconds:
+          type: integer
+          description: Seconds to wait before resending this invite (1–60).
+          example: 42
+
+    UploadResult:
+      type: object
+      required: [url, slug, hasHtml]
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://mysite.upload.tf
+        slug:
+          type: string
+          description: The public name, or the id when no name was set.
+          example: mysite
+        hasHtml:
+          type: boolean
+          description: Whether the page/site has an index.html.
+
+    HostResult:
+      type: object
+      required: [url, slug, hosted]
+      properties:
+        url:
+          type: string
+          format: uri
+        slug:
+          type: string
+        hosted:
+          type: boolean
+          enum: [true]
+
+    DeleteResult:
+      type: object
+      required: [deleted, id]
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+        id:
+          type: string
+          description: The id of the deleted resource.
+
+    UpgradeNudge:
+      type: object
+      description: |
+        Optional upgrade hint included on some `403` plan-limit rejections.
+        Shape is advisory and may evolve; clients should treat it as opaque.
+      additionalProperties: true
+
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          description: Human-readable error message.
+        upgrade:
+          $ref: '#/components/schemas/UpgradeNudge'
+      example:
+        success: false
+        error: Invalid or revoked API key
+
+    # --- Success envelopes ---------------------------------------------------
+
+    UploadResultEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/UploadResult' }
+
+    PageEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [page]
+          properties:
+            page: { $ref: '#/components/schemas/ApiPage' }
+
+    PagesListEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [pages, limit]
+          properties:
+            pages:
+              type: array
+              items: { $ref: '#/components/schemas/ApiPage' }
+            limit:
+              type: integer
+              description: The effective limit applied to this response.
+
+    HostEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/HostResult' }
+
+    ProjectFile:
+      type: object
+      description: One file inside a hosted site or an HTML page.
+      required: [path, sizeBytes, contentType, isEntry]
+      properties:
+        path:
+          type: string
+          description: The file's path relative to the site root.
+          example: assets/app.js
+        sizeBytes:
+          type: integer
+          format: int64
+          example: 88134
+        contentType:
+          type: string
+          description: Derived from the file extension; the same type the site serves it with.
+          example: text/javascript; charset=utf-8
+        isEntry:
+          type: boolean
+          description: |
+            True for the file the page opens at. It can be replaced but never
+            deleted: a page without its entry file would not load. An HTML page has
+            exactly one file and it is always the entry.
+          example: false
+
+    ProjectFilesEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data:
+          type: object
+          required: [files, fileCount, totalBytes]
+          properties:
+            files:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProjectFile'
+            fileCount:
+              type: integer
+              example: 12
+            totalBytes:
+              type: integer
+              format: int64
+              example: 1069547
+            maxFiles:
+              type: integer
+              description: Maximum number of files a site may contain. Present on reads.
+              example: 200
+            maxFileBytes:
+              type: integer
+              format: int64
+              description: >-
+                Maximum size of any single file, for THIS caller's plan. Bounded by
+                what one request can carry and screen, so it does not scale to the
+                plan's whole per-upload allowance. Present on reads.
+              example: 26214400
+            maxTotalBytes:
+              type: integer
+              format: int64
+              description: >-
+                Maximum combined size of all files, for THIS caller's plan: equal to
+                the plan's per-upload allowance (see /pricing for each plan). Plan
+                dependent, so do not hard-code it; read it from here. Present on reads.
+              example: 5368709120
+            becameSite:
+              type: boolean
+              description: >-
+                True when THIS change promoted a single HTML page (`kind: html`) to a
+                hosted site (`kind: site`), because the committed project now holds
+                more than one file. One-way and in place — the page id, slug, public
+                URL and entry path are unchanged — so the only thing it asks of a
+                client is to say so. Present on writes; absent on reads.
+              example: false
+            displayModeReset:
+              type: boolean
+              description: >-
+                True when that same promotion also had to drop a
+                `display_mode: download`, which a hosted site cannot offer, resetting
+                it to `preview_download` in the very statement that promoted the page.
+                Always false when `becameSite` is false. Present on writes; absent on
+                reads.
+              example: false
+
+    DeleteEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/DeleteResult' }
+
+    LinkEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/ShortLink' }
+
+    LinksListEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [links]
+          properties:
+            links:
+              type: array
+              items: { $ref: '#/components/schemas/ShortLink' }
+
+    AccountEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/AccountInfo' }
+
+    TeamMembersEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [members, seats]
+          properties:
+            members:
+              type: array
+              items: { $ref: '#/components/schemas/TeamMember' }
+            seats: { $ref: '#/components/schemas/SeatUsage' }
+
+    TeamMemberEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [member]
+          properties:
+            member: { $ref: '#/components/schemas/TeamMember' }
+
+    RevokeMemberEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [revoked]
+          properties:
+            revoked: { type: boolean, enum: [true] }
+
+    BulkDeletedEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [deleted, pending, held, failed]
+          description: >-
+            The outcome of every page the request actually attempted: the four
+            counts always sum to that number, so a caller can reconcile a bulk
+            request without inferring the difference.
+          properties:
+            deleted:
+              type: integer
+              description: Number of pages actually deleted.
+            pending:
+              type: integer
+              description: >-
+                Accepted, but still in flight. The page is still present and
+                still served until it completes, so it is deliberately not
+                counted as deleted.
+            held:
+              type: integer
+              description: >-
+                Refused because the page is withheld on legal grounds. The page
+                survives.
+            failed:
+              type: integer
+              description: Number of pages that could not be deleted for any other reason.
+
+    BulkAffectedEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [affected]
+          properties:
+            affected:
+              type: integer
+              description: Number of links the action changed.
+
+    ClickSeriesEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [days, points]
+          properties:
+            days:
+              type: integer
+              description: |
+                Length of the window in days: your plan's analytics history, or the
+                `days` you requested, whichever is smaller. `points` always has
+                exactly this many entries.
+              example: 30
+            points:
+              type: array
+              description: One entry per day, oldest → newest, gap-filled with zeros.
+              items: { $ref: '#/components/schemas/ClickPoint' }
+
+    PagePasswordStateEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [protected, entitled]
+          properties:
+            protected: { type: boolean, description: Whether the page is password-protected. }
+            entitled: { type: boolean, description: Whether this caller may enable protection. }
+
+    PagePasswordResultEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [protected]
+          properties:
+            protected: { type: boolean }
+
+    EmailGateStateEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [enabled, message, consentRequired, captureCount, entitled]
+          properties:
+            enabled: { type: boolean }
+            message: { type: string, nullable: true }
+            consentRequired: { type: boolean }
+            captureCount: { type: integer }
+            entitled: { type: boolean, description: Whether this caller may enable the gate. }
+
+    EmailGateUpdatedEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [enabled, message, consentRequired, captureCount]
+          properties:
+            enabled: { type: boolean }
+            message: { type: string, nullable: true }
+            consentRequired: { type: boolean }
+            captureCount: { type: integer }
+
+    EmailGateDisabledEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [enabled, message]
+          properties:
+            enabled: { type: boolean, enum: [false] }
+            message: { type: string, nullable: true }
+
+    CapturesEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [captures, count, limit]
+          properties:
+            captures:
+              type: array
+              items: { $ref: '#/components/schemas/EmailCapture' }
+            count: { type: integer, description: Total captures for the page. }
+            limit: { type: integer, description: The effective limit applied. }
+
+    DeleteCapturesRequest:
+      type: object
+      description: |
+        Erase one captured email (`email`) or every capture for the page (`all: true`).
+        Provide exactly one of the two.
+      properties:
+        email:
+          type: string
+          format: email
+          description: The address to erase (normalized, trimmed + lowercased).
+        all:
+          type: boolean
+          description: When true, erase every captured email for the page.
+
+    CapturesDeletedEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [deleted]
+          properties:
+            deleted: { type: integer, description: Number of capture rows erased. }
+
+    DisplayModeStateEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [mode, applies]
+          properties:
+            mode: { $ref: '#/components/schemas/DisplayMode' }
+            applies: { type: boolean, description: Whether display mode applies to this page's kind. }
+
+    DisplayModeResultEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [mode]
+          properties:
+            mode: { $ref: '#/components/schemas/DisplayMode' }
+
+    ChatAvailabilityEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [chat]
+          properties:
+            chat:
+              type: object
+              required: [chatEnabled, status]
+              properties:
+                chatEnabled: { type: boolean }
+                status:
+                  type: string
+                  enum: [pending, ready, failed]
+                  nullable: true
+                  description: Extraction status; null when chat is off or not yet started.
+            detail:
+              type: string
+              description: Present only when extraction failed (a truncated diagnostic for the owner).
+
+    DomainsListEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [domains, limit, offset, hasMore]
+          properties:
+            domains:
+              type: array
+              items: { $ref: '#/components/schemas/DomainConnection' }
+            limit: { type: integer, description: The effective limit applied. }
+            offset: { type: integer, description: The effective offset applied. }
+            hasMore: { type: boolean, description: Whether another page exists past this one. }
+
+    DomainConnectionEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/DomainConnection' }
+
+    DomainDeletedEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [id]
+          properties:
+            id: { type: string, description: The id of the disconnected domain. }
+
+    DomainSearchEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [configured, query, results]
+          properties:
+            configured: { type: boolean, description: Whether the registrar is configured. }
+            query: { type: string }
+            results:
+              type: array
+              items: { $ref: '#/components/schemas/DomainSearchResult' }
+
+    OAuthError:
+      type: object
+      description: |
+        The standard OAuth error envelope (RFC 6749 §5.2, RFC 7591 §3.2.2,
+        RFC 7009 §2.2) every AI-connector endpoint uses, distinct from this
+        API's own `{ success, error }` envelope used everywhere else in this
+        document.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            A registered OAuth error code, e.g. `invalid_request`,
+            `invalid_client_metadata`, `invalid_redirect_uri`, `invalid_grant`,
+            `invalid_scope`, `invalid_target`, `unsupported_grant_type`,
+            `unsupported_response_type`, `access_denied`, `server_error`.
+        error_description:
+          type: string
+          description: Human-readable detail. Omitted when there is none.
+
+    OAuthAuthorizationServerMetadata:
+      type: object
+      description: RFC 8414 authorization server metadata.
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - registration_endpoint
+        - revocation_endpoint
+        - scopes_supported
+        - response_types_supported
+        - response_modes_supported
+        - grant_types_supported
+        - token_endpoint_auth_methods_supported
+        - code_challenge_methods_supported
+      properties:
+        issuer: { type: string, format: uri, example: 'https://upload.tf' }
+        authorization_endpoint: { type: string, format: uri, example: 'https://upload.tf/oauth/authorize' }
+        token_endpoint: { type: string, format: uri, example: 'https://upload.tf/api/oauth/token' }
+        registration_endpoint: { type: string, format: uri, example: 'https://upload.tf/api/oauth/register' }
+        revocation_endpoint: { type: string, format: uri, example: 'https://upload.tf/api/oauth/revoke' }
+        scopes_supported: { type: array, items: { type: string }, example: ['sites:read', 'sites:write'] }
+        response_types_supported: { type: array, items: { type: string }, example: [code] }
+        response_modes_supported:
+          type: array
+          items: { type: string }
+          example: [query]
+          description: Always `[query]` (the authorize endpoint only ever answers via a redirect carrying query params, never a fragment or form_post).
+        grant_types_supported: { type: array, items: { type: string }, example: [authorization_code, refresh_token] }
+        token_endpoint_auth_methods_supported:
+          type: array
+          items: { type: string }
+          example: [none]
+          description: Always `[none]`, every client is public (see the client registration endpoint); there is no confidential-client auth method to advertise.
+        code_challenge_methods_supported: { type: array, items: { type: string }, example: [S256] }
+
+    OAuthProtectedResourceMetadata:
+      type: object
+      description: RFC 9728 protected resource metadata for the MCP endpoint.
+      required: [resource, authorization_servers, bearer_methods_supported, scopes_supported]
+      properties:
+        resource: { type: string, format: uri, description: The MCP endpoint's canonical resource identifier. }
+        authorization_servers:
+          type: array
+          items: { type: string, format: uri }
+          description: Always exactly this same origin (there is no separate authorization-server deployment).
+        bearer_methods_supported:
+          type: array
+          items: { type: string }
+          example: [header]
+          description: Always `[header]` (bearer tokens travel only in the `Authorization` header, never a query string).
+        scopes_supported: { type: array, items: { type: string }, example: ['sites:read', 'sites:write'] }
+
+    OAuthClientRegistrationRequest:
+      type: object
+      description: RFC 7591 Dynamic Client Registration request.
+      required: [client_name, redirect_uris]
+      properties:
+        client_name: { type: string, maxLength: 200 }
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { type: string, format: uri, maxLength: 2048 }
+          description: |
+            Each must be an absolute, fragment-free URI. `https://` is always
+            allowed; plain `http://` only for loopback
+            (`localhost` / `127.0.0.1` / `::1`); any other scheme is treated
+            as a native-app custom scheme (e.g. `myapp://callback`) and must
+            carry a real host or path.
+        scope:
+          type: string
+          description: Space-delimited, informational only (echoed back, but NOT an allowlist). What a token can actually do is whatever the user approves on the consent screen for that specific authorization.
+        grant_types:
+          type: array
+          items: { type: string, enum: [authorization_code, refresh_token] }
+          description: Defaults to both if omitted.
+        response_types:
+          type: array
+          items: { type: string, enum: [code] }
+          description: Defaults to `[code]` if omitted.
+        token_endpoint_auth_method:
+          type: string
+          enum: [none]
+          description: Only `"none"` (public client) is accepted; this server never issues a `client_secret`.
+
+    OAuthClientRegistrationResponse:
+      type: object
+      description: RFC 7591 §3.2.1 successful registration response.
+      required: [client_id, client_id_issued_at, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method]
+      properties:
+        client_id: { type: string, example: d1e2f3a4-5b6c-7d8e-9f0a-1b2c3d4e5f6a }
+        client_id_issued_at: { type: integer, description: Unix timestamp (seconds). }
+        client_name: { type: string }
+        redirect_uris: { type: array, items: { type: string, format: uri } }
+        grant_types: { type: array, items: { type: string } }
+        response_types: { type: array, items: { type: string } }
+        token_endpoint_auth_method: { type: string, enum: [none] }
+        scope: { type: string, description: Omitted entirely when empty (never echoed as an empty string). }
+
+    OAuthTokenRequest:
+      type: object
+      description: |
+        RFC 6749 §4.1.3 / §6 token request. Required fields depend on
+        `grant_type`: `authorization_code` needs `code`, `redirect_uri`,
+        `client_id`, `code_verifier`; `refresh_token` needs only
+        `refresh_token`.
+      required: [grant_type]
+      properties:
+        grant_type: { type: string, enum: [authorization_code, refresh_token] }
+        code: { type: string, description: 'Required for grant_type=authorization_code.' }
+        redirect_uri: { type: string, format: uri, description: 'Required for grant_type=authorization_code; must match the value sent to /oauth/authorize exactly.' }
+        client_id: { type: string, description: 'Required for grant_type=authorization_code.' }
+        code_verifier:
+          type: string
+          pattern: '^[A-Za-z0-9\-._~]{43,128}$'
+          description: 'RFC 7636 PKCE verifier. Required for grant_type=authorization_code.'
+        refresh_token: { type: string, description: 'Required for grant_type=refresh_token.' }
+
+    OAuthTokenResponse:
+      type: object
+      description: RFC 6749 §5.1 successful token response.
+      required: [access_token, token_type, expires_in, refresh_token, scope]
+      properties:
+        access_token: { type: string, example: utf_at_… }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, example: 3600, description: Access token lifetime in seconds (fixed at 1 hour). }
+        refresh_token: { type: string, example: utf_rt_…, description: Rotates on every use; the previous refresh token stops working once this one is issued. }
+        scope: { type: string, example: 'sites:read sites:write' }
+
+  responses:
+    BadRequest:
+      description: The request was malformed or failed validation.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: No file provided
+
+    Unauthorized:
+      description: No API key was presented, or the key is invalid/revoked.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: An API key is required. Pass it in the x-api-key header or as a Bearer token.
+
+    Forbidden:
+      description: |
+        Your key is valid, but your current plan doesn't permit this action: e.g.
+        your plan doesn't include API access, or a paid-only feature or quota was
+        hit. May include an `upgrade` hint.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: The API is available on plans with API access. Upgrade to Business to use it.
+
+    NotFound:
+      description: The resource was not found or is not owned by the caller.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: Not found
+
+    Conflict:
+      description: The requested name or custom code is already taken.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: That custom code is already taken
+
+    PayloadTooLarge:
+      description: The uploaded file exceeds the allowed size.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: File too large
+
+    UnsafeDestination:
+      description: The destination URL was flagged as unsafe by Safe Browsing.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: That destination was flagged as unsafe and cannot be shortened
+
+    TooManyRequests:
+      description: Rate limit exceeded (limits depend on the caller's plan).
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying (sent on write endpoints).
+          schema:
+            type: integer
+            example: 3600
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: Too many requests. Please try again later.
+
+    ServiceUnavailable:
+      description: |
+        The request was valid but could not be served right now — either a
+        required capability is switched off site-wide (for example, uploads are
+        temporarily disabled by an administrator), or the service could not
+        accept the request at all. Nothing was created or changed; retry later.
+
+        Distinct from `429`, which means a limit was reached: a `503` carries no
+        `limitKind` and no upgrade path, because there is no limit to lift.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: File uploads are temporarily disabled.
+    ServerError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            error: Could not delete the page. Please try again.
+
+    OAuthRateLimited:
+      description: |
+        Per-IP rate limit exceeded on this public, unauthenticated,
+        DB-writing endpoint (defense-in-depth, not a substitute for the
+        endpoint's own cryptographic guarantees).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OAuthError' }
+          example:
+            error: invalid_request
+            error_description: Too many requests
+
+    OAuthServerError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/OAuthError' }
+          example:
+            error: server_error

@@ -1,0 +1,23 @@
+generate:
+  - types
+  - client
+accessModifier: package
+namingStrategy: idiomatic
+filter:
+  operations:
+    - listPages
+    - getPage
+    - createPage
+    - updatePage
+    - renamePage
+    - deletePage
+    - getPagePassword
+    - setPagePassword
+    - removePagePassword
+    - getPageExpiry
+    - setPageExpiry
+    - getEmailGate
+    - setEmailGate
+    - disableEmailGate
+    - getPageDisplay
+    - setPageDisplay

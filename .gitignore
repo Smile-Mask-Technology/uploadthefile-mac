@@ -1,0 +1,16 @@
+.build/
+.swiftpm/
+build/
+*.xcodeproj
+.DS_Store
+
+# Code-signing material must never be committed.
+Apple Certificate/
+*.certSigningRequest
+*.cer
+*.p12
+*.mobileprovision
+*.provisionprofile
+.build-arm64/
+.build-x86_64/
+.build-x86/
