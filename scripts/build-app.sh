@@ -22,6 +22,11 @@ FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
 # Sparkle's binary package: one macOS slice holding Apple silicon and Intel, so a universal build
 # embeds the same framework as a single-architecture one.
 SPARKLE_SRC=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+  # The universal build links Sparkle from the slices' own scratch folders, so it embeds the
+  # framework that was linked, not whatever a plain `.build` happens to hold.
+  SPARKLE_SRC=".build-arm64/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+fi
 VERSION="$(cat VERSION)"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 ENTITLEMENTS="Resources/UploadTheFile.entitlements"
@@ -77,7 +82,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # Sparkle.framework, copied with ditto so the symlinks inside it survive (a plain copy breaks the
 # framework's signature). The app is not sandboxed, so Sparkle's XPC services are never used;
 # Sparkle documents removing them, and they must go before the framework is signed.
-[ -d "$SPARKLE_SRC" ] || { echo "Missing $SPARKLE_SRC; run scripts/test.sh (or swift build) once to fetch the packages" >&2; exit 1; }
+[ -d "$SPARKLE_SRC" ] || { echo "Missing $SPARKLE_SRC; run scripts/test.sh (or swift build) once to fetch the packages (a universal build fetches them into .build-arm64 as it builds)" >&2; exit 1; }
 mkdir -p "$APP/Contents/Frameworks"
 ditto --norsrc --noextattr --noqtn "$SPARKLE_SRC" "$FRAMEWORK"
 rm -rf "$FRAMEWORK/Versions/B/XPCServices" "$FRAMEWORK/XPCServices"
@@ -110,6 +115,10 @@ else
   # Library validation (part of the hardened runtime) refuses a framework that has no team in
   # its signature, so an ad-hoc build of an app that embeds Sparkle runs without the runtime.
   RUNTIME=""
+  # A dev build must not poll the live feed (and so be offered the public release): without
+  # SUFeedURL the app does not start an updater.
+  "$PLIST_BUDDY" -c "Delete :SUFeedURL" "$APP/Contents/Info.plist"
+  plutil -lint "$APP/Contents/Info.plist"
   echo "    SIGN_IDENTITY is not set: ad-hoc signature, without the hardened runtime (this Mac only)"
 fi
 # Inside out, each piece signed on its own (never --deep): Sparkle's helper tool and helper app,

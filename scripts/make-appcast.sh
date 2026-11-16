@@ -19,7 +19,7 @@
 # Every required option is checked before anything is written. No network, no keys.
 set -eu
 
-fail() { echo "make-appcast.sh: $*" >&2; exit 64; }
+fail() { printf '%s\n' "make-appcast.sh: $*" >&2; exit 64; }
 
 VERSION="" BUILD="" URL="" SIGNATURE="" LENGTH="" NOTES="" OUTPUT="" MIN_SYSTEM="14.0.0" DATE=""
 while [ "$#" -gt 0 ]; do
@@ -53,7 +53,7 @@ done
 
 case "$LENGTH" in *[!0-9]*) fail "--length must be a whole number of bytes, got $LENGTH" ;; esac
 [ "$LENGTH" -gt 0 ] || fail "--length must be more than zero"
-case "$BUILD" in *[!0-9.]*) fail "--build must be a number (CFBundleVersion), got $BUILD" ;; esac
+case "$BUILD" in *[!0-9]*) fail "--build must be a whole number (CFBundleVersion), got $BUILD" ;; esac
 case "$URL" in https://*) ;; *) fail "--url must start with https://" ;; esac
 # The signature is base64.
 case "$SIGNATURE" in *[!A-Za-z0-9+/=]*) fail "--signature is not a base64 signature" ;; esac
@@ -71,25 +71,25 @@ mkdir -p "$(dirname "$OUTPUT")"
 TMP="$OUTPUT.tmp.$$"
 trap 'rm -f "$TMP"' EXIT
 {
-  echo '<?xml version="1.0" encoding="utf-8"?>'
-  echo '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">'
-  echo '  <channel>'
-  echo '    <title>Upload the File</title>'
-  echo '    <item>'
-  echo "      <title>Version $(escape "$VERSION")</title>"
+  printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>'
+  printf '%s\n' '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+  printf '%s\n' '  <channel>'
+  printf '%s\n' '    <title>Upload the File</title>'
+  printf '%s\n' '    <item>'
+  printf '%s\n' "      <title>Version $(escape "$VERSION")</title>"
   # The notes are HTML inside CDATA; a "]]>" in them would end the section early, so it is split.
-  echo '      <description><![CDATA['
+  printf '%s\n' '      <description><![CDATA['
   sed -e 's/]]>/]]]]><![CDATA[>/g' "$NOTES"
-  echo ']]></description>'
-  echo "      <pubDate>$(escape "$DATE")</pubDate>"
-  echo "      <sparkle:version>$(escape "$BUILD")</sparkle:version>"
-  echo "      <sparkle:shortVersionString>$(escape "$VERSION")</sparkle:shortVersionString>"
-  echo "      <sparkle:minimumSystemVersion>$(escape "$MIN_SYSTEM")</sparkle:minimumSystemVersion>"
-  echo "      <enclosure url=\"$(escape "$URL")\" sparkle:edSignature=\"$SIGNATURE\" length=\"$LENGTH\" type=\"application/octet-stream\"/>"
-  echo '    </item>'
-  echo '  </channel>'
-  echo '</rss>'
+  printf '%s\n' ']]></description>'
+  printf '%s\n' "      <pubDate>$(escape "$DATE")</pubDate>"
+  printf '%s\n' "      <sparkle:version>$(escape "$BUILD")</sparkle:version>"
+  printf '%s\n' "      <sparkle:shortVersionString>$(escape "$VERSION")</sparkle:shortVersionString>"
+  printf '%s\n' "      <sparkle:minimumSystemVersion>$(escape "$MIN_SYSTEM")</sparkle:minimumSystemVersion>"
+  printf '%s\n' "      <enclosure url=\"$(escape "$URL")\" sparkle:edSignature=\"$SIGNATURE\" length=\"$LENGTH\" type=\"application/octet-stream\"/>"
+  printf '%s\n' '    </item>'
+  printf '%s\n' '  </channel>'
+  printf '%s\n' '</rss>'
 } > "$TMP"
 mv "$TMP" "$OUTPUT"
 trap - EXIT
-echo "Wrote $OUTPUT"
+printf '%s\n' "Wrote $OUTPUT"
