@@ -5,6 +5,10 @@
 #   SIGN_IDENTITY="Developer ID Application: ..." scripts/build-app.sh
 #                                              signed with hardened runtime and a timestamp
 #   UNIVERSAL=1 scripts/build-app.sh           Apple silicon + Intel (scripts/release.sh sets it)
+#   RELEASE=1 scripts/build-app.sh             single architecture, but with the pinned package versions
+#
+# UNIVERSAL=1 and RELEASE=1 build with --force-resolved-versions: the build fails instead of
+# re-resolving packages that differ from Package.resolved.
 #
 # The bundle holds the menu bar app (Contents/MacOS/UploadTheFile) and the command-line tool
 # (Contents/Resources/uptf). Notarization is done by scripts/release.sh, not here.
@@ -21,12 +25,19 @@ ENTITLEMENTS="Resources/UploadTheFile.entitlements"
 # (It must stay free of XML comments: the system's entitlement parser rejects them.)
 
 echo "==> Building (release)"
+# A release build uses exactly the package versions pinned in Package.resolved, and fails instead
+# of re-resolving them: build-time packages (the OpenAPI generator and its dependencies) are not
+# covered by THIRD_PARTY_NOTICES.txt, so a silent re-resolve would go unnoticed.
+PIN=""
+if [ "${UNIVERSAL:-0}" = "1" ] || [ "${RELEASE:-0}" = "1" ]; then
+  PIN="--force-resolved-versions"
+fi
 if [ "${UNIVERSAL:-0}" = "1" ]; then
   # Apple silicon and Intel, one slice each, joined with lipo. (`--arch arm64 --arch x86_64`
   # needs Xcode's build system; per-triple builds work with the Command Line Tools alone.)
   for ARCH in arm64 x86_64; do
-    swift build -c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build-$ARCH" --product UploadTheFile
-    swift build -c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build-$ARCH" --product uptf
+    swift build $PIN -c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build-$ARCH" --product UploadTheFile
+    swift build $PIN -c release --triple "$ARCH-apple-macosx14.0" --scratch-path ".build-$ARCH" --product uptf
   done
   BIN_DIR="build/universal"
   rm -rf "$BIN_DIR"
@@ -37,8 +48,8 @@ if [ "${UNIVERSAL:-0}" = "1" ]; then
       ".build-x86_64/x86_64-apple-macosx/release/$PRODUCT"
   done
 else
-  swift build -c release --product UploadTheFile
-  swift build -c release --product uptf
+  swift build $PIN -c release --product UploadTheFile
+  swift build $PIN -c release --product uptf
   BIN_DIR="$(swift build -c release --show-bin-path)"
 fi
 

@@ -22,8 +22,15 @@ Everything runs on a Mac with the Command Line Tools (no Xcode needed).
    NOTARY_PROFILE=uptf-notary scripts/release.sh
    ```
 
-   It refuses a dirty tree, runs the tests, builds a universal app (Apple silicon and Intel),
-   has Apple notarize the app and then the DMG, staples both, checks Gatekeeper, and writes
+   It refuses a tree that differs from the commit (modified files, and files git does not know in
+   `Sources`, `Resources`, `scripts`, `Package.swift`, `Package.resolved`, `VERSION`), runs the tests
+   (which must report at least `scripts/min-test-count` of them), builds a universal app (Apple
+   silicon and Intel) with exactly the package versions in `Package.resolved`, and checks the tree
+   again after the build. It then checks the app: both programs hold both architectures, the
+   signature verifies (`codesign --verify --strict --deep`) with the hardened runtime and no
+   entitlements, the bundle's version and `uptf --version` equal `VERSION`, and the app contains no
+   snapshot code. After that it has Apple notarize the app and then the DMG, staples both, checks
+   Gatekeeper, and writes
    `build/release/UploadTheFile.dmg` and its `.sha256`. The DMG name never changes, so the
    README's download link (`releases/latest/download/UploadTheFile.dmg`) always serves the newest
    release; never rename the asset.
@@ -44,6 +51,7 @@ Everything runs on a Mac with the Command Line Tools (no Xcode needed).
 
 ## What the release proves before anything is published
 
-`scripts/release.sh` stops at the first failure: tests, signature, notarization (Apple's
+`scripts/release.sh` stops at the first failure: tests, tree and build checks, signature,
+notarization (Apple's
 verdict must be "Accepted"), stapling, and `spctl --assess` on both the app and the DMG
 (`source=Notarized Developer ID`).
