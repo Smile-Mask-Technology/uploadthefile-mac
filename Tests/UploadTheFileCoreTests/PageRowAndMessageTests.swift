@@ -67,6 +67,25 @@ struct PageRowTests {
         #expect(!PageRow(page: makePage(kind: "site"), entry: nil, local: .notTracked, localURL: nil).supportsDisplayMode)
     }
 
+    @Test func aFileTheServerSaysOnlyDownloadsHasNoDisplayChoice() {
+        func row(_ applies: Bool?) -> PageRow {
+            PageRow(page: makePage(kind: "zip", displayModeApplies: applies), entry: nil, local: .notTracked, localURL: nil)
+        }
+        #expect(!row(false).supportsDisplayMode)
+        #expect(row(true).supportsDisplayMode)
+        #expect(row(nil).supportsDisplayMode, "an older server doesn't say: kind alone decides")
+        #expect(!PageRow(page: makePage(kind: "site", displayModeApplies: true), entry: nil, local: .notTracked, localURL: nil).supportsDisplayMode)
+    }
+
+    @Test func onlyAPasswordProtectedLinkGetsALock() {
+        func row(_ protected: Bool?) -> PageRow {
+            PageRow(page: makePage(passwordProtected: protected), entry: nil, local: .notTracked, localURL: nil)
+        }
+        #expect(row(true).isPasswordProtected)
+        #expect(!row(false).isPasswordProtected)
+        #expect(!row(nil).isPasswordProtected)  // an older server does not say
+    }
+
     @Test func rowsShowTheLinkWithoutTheScheme() {
         #expect(LinkLabel.short("https://launch-notes.upload.tf") == "launch-notes.upload.tf")
         #expect(LinkLabel.short("https://launch-notes.upload.tf/") == "launch-notes.upload.tf")
@@ -185,6 +204,13 @@ struct OptionsRulesTests {
     @Test func gateMessageIsClamped() {
         #expect(OptionsRules.clampedGateMessage(String(repeating: "x", count: 250)).count == 200)
         #expect(OptionsRules.clampedGateMessage("hi") == "hi")
+    }
+
+    @Test func anUnreadGateMessageIsNotSentAsEmpty() {
+        #expect(OptionsRules.gateMessageToSend("", messageKnown: false) == nil)
+        #expect(OptionsRules.gateMessageToSend("", messageKnown: true) == "")  // read, then cleared on purpose
+        #expect(OptionsRules.gateMessageToSend("Hello", messageKnown: false) == "Hello")
+        #expect(OptionsRules.gateMessageToSend(String(repeating: "x", count: 250), messageKnown: true)?.count == 200)
     }
 
     @Test func plansLinkIsThePricingPageOfTheSiteOrigin() {

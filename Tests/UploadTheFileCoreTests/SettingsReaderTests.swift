@@ -13,13 +13,14 @@ private actor Reads {
 @Suite("Reading a link's settings")
 struct SettingsReaderTests {
     private func read(
-        readsDisplay: Bool = true, reads: Reads = Reads(),
+        readsDisplay: Bool = true, known: KnownSettings = KnownSettings(), reads: Reads = Reads(),
         password: @escaping @Sendable () async throws -> Bool = { true },
         gate: @escaping @Sendable () async throws -> EmailGateSetting = { EmailGateSetting(enabled: true, message: "Hi") },
         display: @escaping @Sendable () async throws -> DisplayMode = { .download }
     ) async throws -> PageSettings {
         try await SettingsReader.read(
             readsDisplay: readsDisplay,
+            known: known,
             password: { await reads.record("password"); return try await password() },
             emailGate: { await reads.record("gate"); return try await gate() },
             display: { await reads.record("display"); return try await display() })
@@ -90,5 +91,68 @@ struct SettingsReaderTests {
         let settings = try await read(display: { throw UptfError.server(status: 500, message: "Try again later.") })
         #expect(settings.display?.failure == "Couldn't read this setting. Try again later.")
         #expect(settings.display?.allowsSaving == false)
+    }
+
+    // MARK: What the list already said
+
+    @Test func aListThatCarriesEverythingAndNoEmailGateCostsNoReads() async throws {
+        let reads = Reads()
+        let known = KnownSettings(passwordProtected: true, emailGateEnabled: false, displayMode: .previewDownload)
+        let settings = try await read(known: known, reads: reads)
+        #expect(await reads.names == [])
+        #expect(settings.password == .value(true))
+        #expect(settings.emailGate == .value(EmailGateSetting(enabled: false, message: nil)))
+        #expect(settings.display == .value(.previewDownload))
+        #expect(!settings.gateMessageKnown)
+    }
+
+    @Test func anEmailGateThatIsOnIsStillReadForItsMessage() async throws {
+        let reads = Reads()
+        let known = KnownSettings(passwordProtected: false, emailGateEnabled: true, displayMode: .preview)
+        let settings = try await read(known: known, reads: reads)
+        #expect(await reads.names == ["gate"])
+        #expect(settings.emailGate == .value(EmailGateSetting(enabled: true, message: "Hi")))
+        #expect(settings.password == .value(false))
+        #expect(settings.display == .value(.preview))
+        #expect(settings.gateMessageKnown)
+    }
+
+    @Test func aListWithoutTheFieldsReadsAllThreeAsBefore() async throws {
+        let reads = Reads()
+        let settings = try await read(known: KnownSettings(page: makePage()), reads: reads)
+        #expect(await reads.names == ["password", "gate", "display"])
+        #expect(settings.gateMessageKnown)
+    }
+
+    @Test func onlyWhatTheListLeavesOutIsRead() async throws {
+        let reads = Reads()
+        _ = try await read(known: KnownSettings(passwordProtected: true), reads: reads)
+        #expect(await reads.names == ["gate", "display"])
+
+        let more = Reads()
+        _ = try await read(known: KnownSettings(emailGateEnabled: false, displayMode: .download), reads: more)
+        #expect(await more.names == ["password"])
+    }
+
+    @Test func aWebsiteWithEverythingKnownStillReadsNothingForDisplay() async throws {
+        let reads = Reads()
+        let known = KnownSettings(passwordProtected: false, emailGateEnabled: false, displayMode: .preview)
+        let settings = try await read(readsDisplay: false, known: known, reads: reads)
+        #expect(await reads.names == [])
+        #expect(settings.display == nil)
+    }
+
+    @Test func aGateThatIsOnAndCannotBeReadStaysUnsavableWhateverTheListSaid() async throws {
+        let known = KnownSettings(passwordProtected: true, emailGateEnabled: true, displayMode: .preview)
+        let settings = try await read(known: known, gate: { throw UptfError.server(status: 500, message: "") })
+        #expect(settings.emailGate.failure != nil)
+        #expect(!settings.emailGate.allowsSaving)
+        #expect(settings.password == .value(true))
+    }
+
+    @Test func knownSettingsComeFromThePage() {
+        let page = makePage(passwordProtected: true, emailGateEnabled: false, displayMode: .download)
+        #expect(KnownSettings(page: page) == KnownSettings(passwordProtected: true, emailGateEnabled: false, displayMode: .download))
+        #expect(KnownSettings(page: makePage()) == KnownSettings())
     }
 }

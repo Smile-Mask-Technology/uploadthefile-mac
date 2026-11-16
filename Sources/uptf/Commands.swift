@@ -186,11 +186,15 @@ struct List: AsyncParsableCommand {
                 return
             }
             let nameWidth = min(max(pages.map { $0.slug.count }.max() ?? 4, 4), 40)
-            print("\(pad("NAME", nameWidth))  \(pad("KIND", 6))  \(pad("SIZE", 9))  \(pad("ONLINE UNTIL", 20))  LINK")
+            // The protection column appears only when the server reports it.
+            let showsProtection = pages.contains { $0.passwordProtected != nil || $0.emailGateEnabled != nil }
+            let protectionColumn = showsProtection ? "\(pad("PROTECTION", 15))  " : ""
+            print("\(pad("NAME", nameWidth))  \(pad("KIND", 6))  \(pad("SIZE", 9))  \(pad("ONLINE UNTIL", 20))  \(protectionColumn)LINK")
             for page in pages {
+                let protection = showsProtection ? "\(pad(protectionLabel(page), 15))  " : ""
                 print(
                     "\(pad(page.slug, nameWidth))  \(pad(page.kind, 6))  \(pad(formatBytes(page.sizeBytes), 9))  "
-                        + "\(pad(onlineUntil(page.expiresAt), 20))  \(page.url)")
+                        + "\(pad(onlineUntil(page.expiresAt), 20))  \(protection)\(page.url)")
             }
         }
     }
@@ -200,7 +204,7 @@ struct Info: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Show the details and settings of a link.")
 
     @Argument(help: "A file or folder you put online, or the link's name.") var target: String
-    @Flag(help: "Also read the password, email and how-it-opens settings (counts as 3 more requests).") var settings = false
+    @Flag(help: "Also read the password, email and how-it-opens settings the list didn't include (up to 3 more requests).") var settings = false
     @Flag(help: "Print JSON.") var json = false
 
     private struct Output: Encodable {

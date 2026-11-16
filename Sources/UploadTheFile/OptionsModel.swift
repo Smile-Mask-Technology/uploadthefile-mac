@@ -3,10 +3,11 @@ import Observation
 import UploadTheFileCore
 import UptfKit
 
-/// State of one Options window. Settings are read when the window opens (the page, then its
-/// password, email and, for a single file, display setting, one after the other), never before;
-/// every control saves on its own and reports under itself. A setting that could not be read is
-/// shown as such and cannot be saved over.
+/// State of one Options window. Settings are read when the window opens, never before: what the
+/// page list already says (password, email gate on or off, how it opens) is used as it is, and
+/// only what it leaves out is read, one after the other (the email setting also when it is on,
+/// for its message). Every control saves on its own and reports under itself. A setting that
+/// could not be read is shown as such and cannot be saved over.
 @MainActor
 @Observable
 final class OptionsModel {
@@ -49,6 +50,8 @@ final class OptionsModel {
     // Email gate
     var gateEnabled = false
     var gateMessage = ""
+    /// False when the gate was not read (the list said it is off), so its stored message is unknown.
+    private var gateMessageKnown = true
     private(set) var gateStatus: Status = .idle
 
     // Expiry
@@ -134,7 +137,8 @@ final class OptionsModel {
             let api = client
             let id = pageID
             let read = try await SettingsReader.read(
-                readsDisplay: SettingsReader.supportsDisplayMode(kind: fetched.kind),
+                readsDisplay: SettingsReader.supportsDisplayMode(fetched),
+                known: KnownSettings(page: fetched),
                 password: { try await api.passwordProtected(id) },
                 emailGate: {
                     let gate = try await api.emailGate(id)
@@ -142,6 +146,7 @@ final class OptionsModel {
                 },
                 display: { try await api.displayMode(id) })
             settings = read
+            gateMessageKnown = read.gateMessageKnown
             passwordProtected = read.password.value
             if let gate = read.emailGate.value {
                 gateEnabled = gate.enabled
@@ -182,6 +187,8 @@ final class OptionsModel {
             passwordProtected = true
             newPassword = ""
             confirmPassword = ""
+            page.passwordProtected = true
+            AppModel.shared.replace(page)
         }
     }
 
@@ -189,15 +196,20 @@ final class OptionsModel {
         await save(\.passwordStatus, saved: "Password removed.") {
             try await client.removePassword(for: pageID)
             passwordProtected = false
+            page.passwordProtected = false
+            AppModel.shared.replace(page)
         }
     }
 
     func saveGate() async {
         guard canSaveGate else { return }
         let enabled = gateEnabled
-        let message = OptionsRules.clampedGateMessage(gateMessage)
+        let message = OptionsRules.gateMessageToSend(gateMessage, messageKnown: gateMessageKnown)
         await save(\.gateStatus, saved: enabled ? "People will be asked for their email first." : "People can open it without giving their email.") {
             try await client.setEmailGate(pageID, enabled: enabled, message: message)
+            if message != nil { gateMessageKnown = true }
+            page.emailGateEnabled = enabled
+            AppModel.shared.replace(page)
         }
     }
 
@@ -215,6 +227,8 @@ final class OptionsModel {
         await save(\.displayStatus, saved: "Saved") {
             try await client.setDisplay(pageID, mode: mode)
             savedDisplay = mode
+            page.displayMode = mode
+            AppModel.shared.replace(page)
         }
     }
 

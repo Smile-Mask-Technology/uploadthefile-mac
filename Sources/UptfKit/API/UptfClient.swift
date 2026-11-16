@@ -79,19 +79,29 @@ public struct UptfClient: Sendable {
     }
 
     /// A page, and with `includeSettings` its password, email-gate and display state too.
-    /// That costs three more requests (one after the other, so a rate limit stops the rest),
-    /// so ask only for the one page the user is looking at.
+    /// What the page itself carries (a current server puts all three in the list) costs nothing;
+    /// each one it lacks costs one more request (one after the other, so a rate limit stops the
+    /// rest), so ask only for the one page the user is looking at.
     /// Settings the server won't tell us (for example plan limits) come back nil.
     public func details(_ slug: String, includeSettings: Bool = false) async throws -> PageDetails {
         let page = try await page(slug)
-        guard includeSettings else { return PageDetails(page: page) }
-        let password = try await optional { try await passwordProtected(slug) }
-        let gate = try await optional { try await emailGate(slug) }
-        let display = try await optional { try await displayMode(slug) }
-        return PageDetails(
-            page: page, passwordProtected: password,
-            emailGateEnabled: gate?.enabled, emailGateMessage: gate?.message,
-            displayMode: display)
+        var details = PageDetails(
+            page: page, passwordProtected: page.passwordProtected,
+            emailGateEnabled: page.emailGateEnabled, displayMode: page.displayMode)
+        guard includeSettings else { return details }
+        if details.passwordProtected == nil {
+            details.passwordProtected = try await optional { try await passwordProtected(slug) }
+        }
+        // The message needs the read, so only a gate known to be off skips it.
+        if details.emailGateEnabled != false {
+            let gate = try await optional { try await emailGate(slug) }
+            details.emailGateEnabled = gate?.enabled ?? details.emailGateEnabled
+            details.emailGateMessage = gate?.message
+        }
+        if details.displayMode == nil {
+            details.displayMode = try await optional { try await displayMode(slug) }
+        }
+        return details
     }
 
     /// nil when the server refuses this one setting; rate limits and sign-in problems still throw.
@@ -195,11 +205,13 @@ public struct UptfClient: Sendable {
             try await client.setPagePassword(.init(path: .init(slug: slug), body: .json(.init(password: password))))
         }
         guard case .ok = output else { throw unexpected(output) }
+        await cache.update(slug) { $0.passwordProtected = true }
     }
 
     public func removePassword(for slug: String) async throws {
         let output = try await call { try await client.removePagePassword(.init(path: .init(slug: slug))) }
         guard case .ok = output else { throw unexpected(output) }
+        await cache.update(slug) { $0.passwordProtected = false }
     }
 
     /// Turns the email gate on or off. `message` is the prompt shown to visitors; nil leaves it
@@ -210,6 +222,7 @@ public struct UptfClient: Sendable {
                 .init(path: .init(slug: slug), body: .json(.init(enabled: enabled, message: message))))
         }
         guard case .ok = output else { throw unexpected(output) }
+        await cache.update(slug) { $0.emailGateEnabled = enabled }
     }
 
     /// Sets when the link stops working; nil = never.
@@ -229,6 +242,7 @@ public struct UptfClient: Sendable {
             try await client.setPageDisplay(.init(path: .init(slug: slug), body: .json(.init(mode: apiMode))))
         }
         guard case .ok = output else { throw unexpected(output) }
+        await cache.update(slug) { $0.displayMode = mode }
     }
 
     // MARK: Plumbing

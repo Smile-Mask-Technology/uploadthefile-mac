@@ -109,12 +109,13 @@ func makeClient(_ transport: FakeTransport) -> UptfClient {
     return UptfClient(config: testConfig, tokens: tokens, transport: transport)
 }
 
-func pageJSON(id: String, name: String?, kind: String = "site") -> String {
+/// `state` is extra JSON members (starting with a comma), for example the page state fields.
+func pageJSON(id: String, name: String?, kind: String = "site", state: String = "") -> String {
     let nameJSON = name.map { "\"\($0)\"" } ?? "null"
     return """
         {"id":"\(id)","name":\(nameJSON),"url":"https://\(name ?? id).upload.tf","fileName":"index.html",\
         "kind":"\(kind)","sizeBytes":100,"fileCount":2,"createdAt":"2026-01-02T03:04:05Z",\
-        "expiresAt":null,"chatEnabled":false}
+        "expiresAt":null,"chatEnabled":false\(state)}
         """
 }
 
