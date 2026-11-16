@@ -168,6 +168,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         menu.addItem(item("Open Upload the File", #selector(openFromMenu)))
         menu.addItem(item("Manage Files on \(model.siteLabel)", #selector(manageFromMenu)))
         menu.addItem(.separator())
+        let version = NSMenuItem(
+            title: AppVersion.menuTitle(infoDictionary: Bundle.main.infoDictionary), action: nil, keyEquivalent: "")
+        version.isEnabled = false
+        menu.addItem(version)
         menu.addItem(updates.checkForUpdatesItem())
         menu.addItem(item("Quit Upload the File", #selector(quitFromMenu), key: "q"))
         // Attaching the menu for one click lets AppKit position and highlight it like any other

@@ -167,8 +167,15 @@ private struct HeaderRow: View {
                 // Both titles are always laid out (one is invisible), so highlighting the drop
                 // never changes the size of the header, and the popover never resizes during a drag.
                 ZStack(alignment: .leading) {
-                    Text("Upload the File").opacity(targeted ? 0 : 1)
-                        .accessibilityHidden(targeted)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("Upload the File")
+                        Text(AppVersion.current)
+                            .fontWeight(.regular)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("version \(AppVersion.current)")
+                    }
+                    .opacity(targeted ? 0 : 1)
+                    .accessibilityHidden(targeted)
                     Text("Release to publish").opacity(targeted ? 1 : 0)
                         .accessibilityHidden(!targeted)
                 }
