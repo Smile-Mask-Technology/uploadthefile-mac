@@ -38,6 +38,12 @@ tail -1 build/release-tests.log
 
 echo "==> Universal signed app"
 UNIVERSAL=1 SIGN_IDENTITY="$SIGN_IDENTITY" scripts/build-app.sh
+# The notices must match the package versions this build actually compiled in.
+scripts/make-notices.sh > /dev/null
+git diff --quiet -- THIRD_PARTY_NOTICES.txt || {
+  echo "THIRD_PARTY_NOTICES.txt is out of date for this build; commit the regenerated file and rerun." >&2
+  exit 1
+}
 for f in THIRD_PARTY_NOTICES.txt LICENSE; do
   [ -s "$APP/Contents/Resources/$f" ] || { echo "The app is missing Contents/Resources/$f" >&2; exit 1; }
 done
