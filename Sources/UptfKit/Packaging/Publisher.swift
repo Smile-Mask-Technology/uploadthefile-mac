@@ -45,26 +45,38 @@ public struct Publisher: Sendable {
         self.index = index
     }
 
-    /// Inspects `url` without uploading anything. Refuses credential locations unless
-    /// `allowSensitive`, and files over ``UptfClient/maxUploadBytes``.
-    public func prepare(_ url: URL, allowSensitive: Bool = false, includeHidden: Bool = false) throws -> PublishPlan {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+    /// Inspects `url` without uploading anything. Always refuses a folder that holds a protected
+    /// folder (the home folder, `/`, a disk, ...); refuses credential locations unless
+    /// `allowSensitive`; refuses folders over the size limits and files over
+    /// ``UptfClient/maxUploadBytes`` or that are not regular files. A link is judged by what it points to.
+    public func prepare(
+        _ url: URL, allowSensitive: Bool = false, includeHidden: Bool = false,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) throws -> PublishPlan {
+        var info = stat()  // follows a link, so a link to a file is sized and typed as that file
+        guard stat(url.path, &info) == 0 else {
             throw UptfError.unexpected("No such file or folder: \(url.path)")
         }
-        if !allowSensitive, let reason = SensitivePath.reason(for: url) {
+        if SensitivePath.containsProtectedFolder(url, home: home) {
+            throw UptfError.unexpected(SensitivePath.containsProtectedMessage)
+        }
+        if !allowSensitive, let reason = SensitivePath.reason(for: url, home: home) {
             throw UptfError.unexpected("Not putting “\(url.lastPathComponent)” online: \(reason).")
         }
-        if isDirectory.boolValue {
+        switch info.st_mode & S_IFMT {
+        case S_IFDIR:
             let entries = try FolderZipper.previewEntries(folder: url, includeHidden: includeHidden)
             guard !entries.isEmpty else {
                 throw UptfError.unexpected("There is nothing to put online in \(url.lastPathComponent): every file is left out, or the folder is empty.")
             }
             return PublishPlan(url: url, kind: .folder, entries: entries, fileSize: nil, includeHidden: includeHidden)
+        case S_IFREG:
+            let size = Int64(info.st_size)
+            guard size <= UptfClient.maxUploadBytes else { throw UptfError.tooLarge(bytes: size) }
+            return PublishPlan(url: url, kind: .file, entries: [], fileSize: size, includeHidden: includeHidden)
+        default:
+            throw UptfError.unexpected("“\(url.lastPathComponent)” isn't a file or folder that can be put online.")
         }
-        let size = Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
-        guard size <= UptfClient.maxUploadBytes else { throw UptfError.tooLarge(bytes: size) }
-        return PublishPlan(url: url, kind: .file, entries: [], fileSize: size, includeHidden: includeHidden)
     }
 
     /// The server's current page for a recorded entry, found by its immutable id. The index is
@@ -136,8 +148,12 @@ public struct Publisher: Sendable {
         case .file:
             return try await body(plan.url)
         case .folder:
-            let zip = try await FolderZipper.zip(folder: plan.url, includeHidden: plan.includeHidden)
+            // Zip the list the person saw, not a fresh listing of the folder.
+            let zip = try await FolderZipper.zip(folder: plan.url, entries: plan.entries)
             defer { try? FileManager.default.removeItem(at: zip.url.deletingLastPathComponent()) }
+            if let changed = zip.skipped.first {
+                throw UptfError.unexpected("“\(changed)” changed while the folder was being prepared, so nothing was published. Try again.")
+            }
             return try await body(zip.url)
         }
     }
