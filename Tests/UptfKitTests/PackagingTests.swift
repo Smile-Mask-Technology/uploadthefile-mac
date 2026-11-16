@@ -105,9 +105,10 @@ struct PackagingTests {
             #expect(SensitivePath.reason(for: home.appendingPathComponent(".ssh"), home: home) != nil)
             #expect(SensitivePath.reason(for: home.appendingPathComponent(".aws"), home: home) != nil)
             #expect(SensitivePath.reason(for: home.appendingPathComponent("Library/Keychains"), home: home) != nil)
-            // A folder that contains one: the home folder itself, and Library.
-            #expect(SensitivePath.reason(for: home, home: home)?.contains("contains") == true)
-            #expect(SensitivePath.reason(for: home.appendingPathComponent("Library"), home: home) != nil)
+            // A folder that contains one is refused outright, not just warned about.
+            #expect(SensitivePath.containsProtectedFolder(home, home: home))
+            #expect(SensitivePath.containsProtectedFolder(home.appendingPathComponent("Library"), home: home))
+            #expect(SensitivePath.reason(for: home, home: home) == nil)
             // Secret-looking files anywhere.
             #expect(SensitivePath.reason(for: home.appendingPathComponent("Sites/blog/.env"), home: home) != nil)
             // Ordinary things.
