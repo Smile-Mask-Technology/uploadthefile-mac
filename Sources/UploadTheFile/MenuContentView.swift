@@ -356,17 +356,27 @@ private struct RowLink: View {
     var row: PageRow
 
     var body: some View {
-        if model.canOpenLink(row.page.url) {
-            OpenLinkButton(
-                text: row.linkLabel, accessibilityName: "Open \(row.title) in your browser"
-            ) { model.openInBrowser(row) }
-        } else {
-            Text(row.linkLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .allowsHitTesting(false)
+        HStack(spacing: 4) {
+            if row.isPasswordProtected {
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .allowsHitTesting(false)
+                    .help("Password protected")
+                    .accessibilityLabel("Password protected")
+            }
+            if model.canOpenLink(row.page.url) {
+                OpenLinkButton(
+                    text: row.linkLabel, accessibilityName: "Open \(row.title) in your browser"
+                ) { model.openInBrowser(row) }
+            } else {
+                Text(row.linkLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }

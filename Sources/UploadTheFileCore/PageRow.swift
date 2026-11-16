@@ -55,6 +55,10 @@ public struct PageRow: Identifiable, Equatable, Sendable {
 
     /// Display mode only means something for a single file, not for a website.
     public var supportsDisplayMode: Bool { SettingsReader.supportsDisplayMode(kind: page.kind) }
+
+    /// The lock in the row: only when the server said the link has a password. A server that does
+    /// not report it gives no lock, as it does for a link without one.
+    public var isPasswordProtected: Bool { page.passwordProtected == true }
 }
 
 public enum LinkLabel {

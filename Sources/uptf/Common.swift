@@ -181,6 +181,14 @@ func describeDisplay(_ raw: String) -> String {
     }
 }
 
+/// What a link asks of visitors, for the list: "password", "email", both, or "-" for neither.
+func protectionLabel(_ page: PageInfo) -> String {
+    var parts: [String] = []
+    if page.passwordProtected == true { parts.append("password") }
+    if page.emailGateEnabled == true { parts.append("email") }
+    return parts.isEmpty ? "-" : parts.joined(separator: ", ")
+}
+
 func pad(_ string: String, _ width: Int) -> String {
     string.count >= width ? string : string + String(repeating: " ", count: width - string.count)
 }

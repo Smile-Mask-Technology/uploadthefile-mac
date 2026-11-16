@@ -23,11 +23,13 @@ func writeFile(_ relativePath: String, in root: URL, contents: String = "x") thr
 /// A page as the server describes it.
 func makePage(
     id: String = "page-1", name: String? = "my-page", kind: String = "pdf", size: Int64 = 1_500_000,
-    createdAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    createdAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
+    passwordProtected: Bool? = nil, emailGateEnabled: Bool? = nil, displayMode: DisplayMode? = nil
 ) -> PageInfo {
     PageInfo(
         id: id, name: name, url: "https://\(name ?? id).example.test", fileName: "file.\(kind)", kind: kind,
-        sizeBytes: size, fileCount: 1, createdAt: createdAt, expiresAt: nil, chatEnabled: false)
+        sizeBytes: size, fileCount: 1, createdAt: createdAt, expiresAt: nil, chatEnabled: false,
+        passwordProtected: passwordProtected, emailGateEnabled: emailGateEnabled, displayMode: displayMode)
 }
 
 /// A publish-history entry (decoded from JSON, since its initializer is not public).

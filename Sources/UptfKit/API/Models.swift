@@ -22,13 +22,19 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
     /// nil = never expires.
     public var expiresAt: Date?
     public var chatEnabled: Bool
+    /// Protection state the list carries. Each is nil when the server's answer does not have it
+    /// (an older server): nil means "not known", not "off".
+    public var passwordProtected: Bool?
+    public var emailGateEnabled: Bool?
+    public var displayMode: DisplayMode?
 
     /// What the API calls the page in URLs: the name, or the id when there is no name.
     public var slug: String { name ?? id }
 
     public init(
         id: String, name: String?, url: String, fileName: String, kind: String, sizeBytes: Int64,
-        fileCount: Int, createdAt: Date, expiresAt: Date?, chatEnabled: Bool
+        fileCount: Int, createdAt: Date, expiresAt: Date?, chatEnabled: Bool,
+        passwordProtected: Bool? = nil, emailGateEnabled: Bool? = nil, displayMode: DisplayMode? = nil
     ) {
         self.id = id
         self.name = name
@@ -40,13 +46,18 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.expiresAt = expiresAt
         self.chatEnabled = chatEnabled
+        self.passwordProtected = passwordProtected
+        self.emailGateEnabled = emailGateEnabled
+        self.displayMode = displayMode
     }
 
     init(_ page: Components.Schemas.ApiPage) {
         self.init(
             id: page.id, name: page.name, url: page.url, fileName: page.fileName, kind: page.kind,
             sizeBytes: page.sizeBytes, fileCount: page.fileCount, createdAt: page.createdAt,
-            expiresAt: page.expiresAt, chatEnabled: page.chatEnabled)
+            expiresAt: page.expiresAt, chatEnabled: page.chatEnabled,
+            passwordProtected: page.passwordProtected, emailGateEnabled: page.emailGateEnabled,
+            displayMode: page.displayMode.flatMap { DisplayMode(rawValue: $0.rawValue) })
     }
 }
 

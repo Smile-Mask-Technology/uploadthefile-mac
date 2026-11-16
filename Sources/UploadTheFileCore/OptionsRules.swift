@@ -47,6 +47,14 @@ public enum OptionsRules {
         String(message.prefix(maxGateMessageLength))
     }
 
+    /// The message to send with the email setting. An empty message that was never read (the list
+    /// said the gate is off, so only its on/off state is known) is left out, so the server keeps
+    /// what it has; an empty message that was read clears it.
+    public static func gateMessageToSend(_ draft: String, messageKnown: Bool) -> String? {
+        let message = clampedGateMessage(draft)
+        return message.isEmpty && !messageKnown ? nil : message
+    }
+
     /// The plans page of a site: `<origin>/pricing`, whatever path the origin string carries.
     public static func pricingURL(origin: URL) -> URL {
         siteURL(origin: origin, path: "/pricing")
