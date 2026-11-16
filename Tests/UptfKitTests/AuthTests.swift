@@ -123,7 +123,8 @@ struct TokenManagerTests {
         let store = store(expiringIn: 30)  // inside the 60 s leeway
         let refresher = CountingRefresher()
         let now = base
-        let manager = TokenManager(origin: origin, store: store, refresher: refresher, leeway: 60, now: { now })
+        let manager = TokenManager(
+            origin: origin, store: store, refresher: refresher, leeway: 60, now: { now }, lockFileURL: { nil })
 
         async let first = manager.accessToken()
         async let second = manager.accessToken()
@@ -144,7 +145,8 @@ struct TokenManagerTests {
         let refresher = CountingRefresher()
         let now = base
         let manager = TokenManager(
-            origin: origin, store: store(expiringIn: 3600), refresher: refresher, now: { now })
+            origin: origin, store: store(expiringIn: 3600), refresher: refresher, now: { now },
+            lockFileURL: { nil })
         #expect(try await manager.accessToken() == "old-access")
         #expect(await refresher.calls == 0)
     }
@@ -153,7 +155,8 @@ struct TokenManagerTests {
         let refresher = CountingRefresher()
         let now = base
         let manager = TokenManager(
-            origin: origin, store: store(expiringIn: 3600), refresher: refresher, now: { now })
+            origin: origin, store: store(expiringIn: 3600), refresher: refresher, now: { now },
+            lockFileURL: { nil })
 
         // The server said 401 for "old-access" (twice, from two requests).
         async let first = manager.accessToken(replacing: "old-access")
@@ -169,7 +172,7 @@ struct TokenManagerTests {
 
     @Test func nothingStoredMeansNotSignedIn() async {
         let manager = TokenManager(
-            origin: origin, store: InMemoryTokenStore(), refresher: CountingRefresher())
+            origin: origin, store: InMemoryTokenStore(), refresher: CountingRefresher(), lockFileURL: { nil })
         let error = await thrownUptfError { try await manager.accessToken() }
         guard case .notSignedIn? = error else {
             Issue.record("expected notSignedIn, got \(String(describing: error))")
