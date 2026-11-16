@@ -104,7 +104,8 @@ func makeClient(_ transport: FakeTransport) -> UptfClient {
             accessToken: "test-access", refreshToken: "test-refresh",
             expiresAt: Date().addingTimeInterval(3600), clientId: "test-client")
     ])
-    let tokens = TokenManager(origin: testConfig.origin, store: store, refresher: NoRefresh())
+    let tokens = TokenManager(
+        origin: testConfig.origin, store: store, refresher: NoRefresh(), lockFileURL: { nil })
     return UptfClient(config: testConfig, tokens: tokens, transport: transport)
 }
 

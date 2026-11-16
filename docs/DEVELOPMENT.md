@@ -57,7 +57,9 @@ The asset name never changes, so `releases/latest/download/UploadTheFile.dmg` is
 
 **Sign-in.** OAuth 2.1 with PKCE in the default browser, redirect to
 `http://127.0.0.1:<random port>/callback`, tokens bound to `<site>/api/v1`. The client registers
-itself once per site (dynamic client registration). Signing out revokes the grant on the server
+itself once per site (dynamic client registration); if the server no longer knows the registration,
+the stored one is dropped and sign-in registers again. Redirects are never followed for API and
+OAuth requests. Signing out revokes the grant on the server
 (RFC 7009), then forgets it locally.
 
 **Stored on the Mac.**
@@ -69,8 +71,18 @@ itself once per site (dynamic client registration). Signing out revokes the gran
 | Which local file or folder is which link | `~/Library/Application Support/UploadTheFile/published-index.json` |
 
 The index is keyed by the page's immutable id, so a rename on the website keeps the local link. The
-app and `uptf` share the Keychain item and the index; macOS may ask once whether each may use the
-Keychain item, since they are separately signed programs.
+app and `uptf` share the Keychain item and the index.
+
+The Keychain item lives in the file-based login keychain (the data-protection keychain needs a
+provisioning profile, which a command-line tool cannot carry), where the accessibility attribute set
+on creation has no effect. Its access list trusts only the program that created it, so macOS asks
+once for each separately signed program (the app, `uptf`) that reads it.
+
+The app and `uptf` refresh the access token under an exclusive lock on `refresh.lock` (`flock`, in
+the same Application Support folder). A refresh token works once and a second use revokes the whole
+grant, so whichever program gets the lock second reads the tokens the first one saved instead of
+refreshing again. A program that cannot get the lock within 30 seconds reports "not signed in"
+without touching the stored tokens.
 
 **Folders.** Zipped with `/usr/bin/zip`. Hidden files, `.git`, `node_modules`, `.env*`, keys and
 certificates are left out, and the exact list is shown first. Paths such as `~/.ssh`,

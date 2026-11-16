@@ -23,6 +23,11 @@ public final class LoopbackServer: @unchecked Sendable {
         self.timeout = timeout
     }
 
+    /// The error a caller gets when no redirect arrived within the timeout.
+    var timeoutMessage: String {
+        "Timed out waiting for the browser (\(Int(timeout / 60)) minutes)."
+    }
+
     /// Starts listening and returns the port. Redirect URI: `http://127.0.0.1:<port>/callback`.
     public func start() async throws -> UInt16 {
         try await withCheckedThrowingContinuation { continuation in
@@ -37,7 +42,7 @@ public final class LoopbackServer: @unchecked Sendable {
                     listener.newConnectionHandler = { [self] connection in handle(connection) }
                     listener.start(queue: self.queue)
                     let timer = DispatchWorkItem { [self] in
-                        finish(.failure(.signInFailed("Timed out waiting for the browser (\(Int(timeout / 60)) minutes).")))
+                        finish(.failure(.signInFailed(timeoutMessage)))
                     }
                     self.timer = timer
                     self.queue.asyncAfter(deadline: .now() + self.timeout, execute: timer)

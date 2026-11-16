@@ -16,16 +16,20 @@ public struct Authenticator: Sendable {
     private let registrations: ClientRegistrationStore
     private let oauth: OAuthClient
     private let openURL: @Sendable (URL) -> Bool
+    private let callbackTimeout: TimeInterval
 
+    /// - Parameter callbackTimeout: how long to wait for the browser to come back, in seconds.
     public init(
         config: UptfConfig, store: any TokenStore, registrations: ClientRegistrationStore,
-        oauth: OAuthClient? = nil, openURL: @escaping @Sendable (URL) -> Bool = BrowserOpener.open
+        oauth: OAuthClient? = nil, openURL: @escaping @Sendable (URL) -> Bool = BrowserOpener.open,
+        callbackTimeout: TimeInterval = 300
     ) {
         self.config = config
         self.store = store
         self.registrations = registrations
         self.oauth = oauth ?? OAuthClient(config: config)
         self.openURL = openURL
+        self.callbackTimeout = callbackTimeout
     }
 
     /// True when credentials for this site are stored (does not contact the server).
@@ -53,12 +57,32 @@ public struct Authenticator: Sendable {
     /// Runs the whole flow: register (once), open the browser, wait for the redirect, exchange
     /// the code, store the tokens. `onAuthorizationURL` is called with the URL being opened so a
     /// terminal can show it as a fallback.
+    ///
+    /// When the server no longer knows the stored registration, the registration is forgotten.
+    /// If the token request is what reveals it, the flow starts over once with a new registration.
+    /// If the sign-in page rejected it, no redirect ever comes back: the wait ends in a timeout,
+    /// and the next attempt registers again.
     public func signIn(onAuthorizationURL: @Sendable (URL) -> Void = { _ in }) async throws {
+        do {
+            try await attemptSignIn(onAuthorizationURL: onAuthorizationURL)
+        } catch is UnknownClient {
+            do {
+                try await attemptSignIn(onAuthorizationURL: onAuthorizationURL)
+            } catch is UnknownClient {
+                throw UptfError.signInFailed("The sign-in page didn't recognise this app. Please try again.")
+            }
+        }
+    }
+
+    /// The server answered `invalid_client`: the stored registration is gone and has been forgotten.
+    private struct UnknownClient: Error {}
+
+    private func attemptSignIn(onAuthorizationURL: @Sendable (URL) -> Void) async throws {
         let clientId = try await clientId()
         let pkce = try PKCE.generate()
         let state = try PKCE.generateState()
 
-        let server = LoopbackServer(expectedState: state)
+        let server = LoopbackServer(expectedState: state, timeout: callbackTimeout)
         let port = try await server.start()
         defer { server.stop() }
         let redirectURI = "http://127.0.0.1:\(port)/callback"
@@ -70,15 +94,21 @@ public struct Authenticator: Sendable {
             throw UptfError.signInFailed("Could not open the browser. Open this link yourself: \(url.absoluteString)")
         }
 
-        let code = try await server.waitForCode()
+        let code: String
+        do {
+            code = try await server.waitForCode()
+        } catch UptfError.signInFailed(let message) where message == server.timeoutMessage {
+            // An unknown client is refused on the sign-in page, so nothing ever comes back.
+            try? registrations.forget(origin: config.origin)
+            throw UptfError.signInFailed(message)
+        }
         let tokens: OAuthTokens
         do {
             tokens = try await oauth.exchange(
                 code: code, codeVerifier: pkce.verifier, redirectURI: redirectURI, clientId: clientId)
         } catch UptfError.server(_, let message) where message.contains("invalid_client") {
-            // The server forgot our registration: next attempt registers again.
             try? registrations.forget(origin: config.origin)
-            throw UptfError.signInFailed("The sign-in page didn't recognise this app. Please try again.")
+            throw UnknownClient()
         }
         guard let refreshToken = tokens.refreshToken else {
             throw UptfError.signInFailed("Sign-in didn't finish. Please try again.")

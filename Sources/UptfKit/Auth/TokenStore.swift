@@ -87,6 +87,9 @@ public struct KeychainTokenStore: TokenStore {
         case errSecItemNotFound:
             var add = query(origin: origin)
             add[kSecValueData as String] = data
+            // Only the data-protection keychain (not used here, it needs a provisioning profile)
+            // honours this attribute; the file-based login keychain ignores it. It is kept for a
+            // later move to the data-protection keychain, and gives no protection today.
             add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             add[kSecAttrLabel as String] = "Upload the File (\(origin))"
             let status = SecItemAdd(add as CFDictionary, nil)

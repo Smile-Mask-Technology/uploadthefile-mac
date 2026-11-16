@@ -15,15 +15,34 @@ extension URLSession: HTTPLoader {
     }
 }
 
+/// Refuses every redirect. The API and the OAuth endpoints answer in place, so a redirect is
+/// never legitimate: following one would replay a token request's body (refresh token, or code
+/// and verifier) at another address and could carry the bearer token along. The redirect answer
+/// itself is returned to the caller as the response.
+final class RefuseRedirectsDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 extension URLSession {
     /// A session with no cache or cookie storage and sensible timeouts, for OAuth and API calls.
+    /// It does not follow redirects.
     public static func uptfDefault() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
+        uptfSession(configuration: .ephemeral)
+    }
+
+    /// ``uptfDefault()`` on a given configuration (tests add a stub protocol).
+    static func uptfSession(configuration: URLSessionConfiguration) -> URLSession {
         configuration.timeoutIntervalForRequest = 30
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: RefuseRedirectsDelegate(), delegateQueue: nil)
     }
 }
 
