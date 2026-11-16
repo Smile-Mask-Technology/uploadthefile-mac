@@ -35,6 +35,13 @@ struct UpdateTests {
         #expect(plist["SUPublicEDKey"] as? String == "A+sSRMIu/QaRdklm4R4iQKYEIy6tCxtzosfQu8LsyEw=")
         #expect(plist["SUEnableAutomaticChecks"] as? Bool == true)
         #expect(plist["SUEnableSystemProfiling"] as? Bool == false)
+        // The update archive's signature is checked before the disk image is opened, and the feed
+        // itself must be signed with the same key.
+        #expect(plist["SUVerifyUpdateBeforeExtraction"] as? Bool == true)
+        #expect(plist["SURequireSignedFeed"] as? Bool == true)
+        // Release notes are plain HTML: no scripts, no extra link schemes.
+        #expect(plist["SUEnableJavaScript"] == nil)
+        #expect(plist["SUAllowedURLSchemes"] == nil)
     }
 
     // MARK: make-appcast.sh
@@ -179,6 +186,7 @@ struct UpdateTests {
             }
             let bad: [(String, String)] = [
                 ("--length", "12x"), ("--length", "0"), ("--build", "abc"),
+                ("--build", "5.7"), ("--build", "."),
                 ("--url", "http://example.test/UploadTheFile.dmg"),
                 ("--signature", "not base64!"),
                 ("--notes", directory.appendingPathComponent("missing.html").path),
@@ -293,6 +301,157 @@ struct UpdateTests {
         }
     }
 
+    // MARK: Gates in release.sh
+
+    /// The index of the first code line that contains every needle.
+    private static func line(_ lines: [String], _ needles: String...) -> Int? {
+        lines.firstIndex { line in needles.allSatisfy { line.contains($0) } }
+    }
+
+    @Test func releaseRefusesAnUnsignedFeedAndAnUnverifiedDiskImageSettingBeforePublishing() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        for key in ["SUVerifyUpdateBeforeExtraction", "SURequireSignedFeed"] {
+            let check = try #require(Self.line(lines, key, "PlistBuddy"), "\(key) is not read from the built app")
+            #expect(lines[check].contains("= \"true\""), "\(key) must be true: \(lines[check])")
+        }
+        // Settings that widen what the update window may load or open must stay absent.
+        for key in ["SUEnableJavaScript", "SUAllowedURLSchemes"] {
+            let check = try #require(Self.line(lines, key, "PlistBuddy"), "\(key) is not checked")
+            #expect(lines[check].contains("&& fail"), "\(key) must be refused when present: \(lines[check])")
+        }
+    }
+
+    @Test func releaseSignsTheAppcastInPlaceAndVerifiesItBeforeXmllint() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let make = try #require(Self.line(lines, "scripts/make-appcast.sh"))
+        let sign = try #require(lines.indices.first { $0 > make && lines[$0].contains("sign_update") && lines[$0].contains("\"$OUT/appcast.xml\"") && !lines[$0].contains("--verify") },
+                                "the appcast is not signed")
+        #expect(lines[sign].contains("--account \"$SPARKLE_ACCOUNT\""))
+        let verify = try #require(lines.indices.first { $0 > sign && lines[$0].contains("sign_update") && lines[$0].contains("--verify") && lines[$0].contains("\"$OUT/appcast.xml\"") },
+                                  "the signed appcast is not verified")
+        let lint = try #require(Self.line(lines, "xmllint", "\"$OUT/appcast.xml\""))
+        #expect(make < sign && sign < verify && verify < lint)
+        #expect(lines[verify].contains("fail"), "a failed verification must stop the release")
+    }
+
+    @Test func releaseRefusesAWrongBuildNumberBeforeBuilding() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let build = try #require(lines.firstIndex { $0.hasPrefix("UNIVERSAL=1") && $0.contains("scripts/build-app.sh") })
+        let tree = try #require(Self.line(lines, "check_tree_matches_commit \"Before the build:\""))
+        let shallow = try #require(Self.line(lines, "rev-parse --is-shallow-repository"), "a shallow clone is not refused")
+        let branch = try #require(Self.line(lines, "symbolic-ref", "HEAD"), "the branch is not checked")
+        #expect(lines[branch].contains("main"))
+        let ancestor = try #require(Self.line(lines, "merge-base --is-ancestor", "$PREV_TAG", "HEAD"), "the previous release is not required in the history")
+        let tags = try #require(Self.line(lines, "git tag --list 'v*'"))
+        for index in [shallow, branch, tags, ancestor] {
+            #expect(index > tree && index < build, "gate after the build or before the tree check: \(lines[index])")
+        }
+    }
+
+    @Test func releaseTakesTheMinimumSystemFromTheBuiltApp() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let read = try #require(Self.line(lines, "LSMinimumSystemVersion", "PlistBuddy", "$APP/Contents/Info.plist"))
+        let call = try #require(Self.line(lines, "scripts/make-appcast.sh"))
+        #expect(read < call)
+        #expect(lines.contains { $0.contains("MIN_SYSTEM=\"$MIN_SYSTEM.0\"") }, "x.y is not extended to x.y.0")
+        let arguments = lines[call..<min(call + 5, lines.count)].joined(separator: " ")
+        #expect(arguments.contains("--min-system \"$MIN_SYSTEM\""))
+    }
+
+    @Test func releaseRefusesNotesThatAreStaleOrLoadRemoteFiles() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let build = try #require(lines.firstIndex { $0.hasPrefix("UNIVERSAL=1") && $0.contains("scripts/build-app.sh") })
+        let version = try #require(Self.line(lines, "grep -qF \"$VERSION\" \"$RELEASE_NOTES_HTML\""), "the notes need not name the version")
+        let sources = try #require(lines.firstIndex { $0.contains("grep") && $0.contains("src") && $0.contains("\"$RELEASE_NOTES_HTML\"") }, "remote resources are not refused")
+        #expect(version < build && sources < build)
+    }
+
+    @Test func releaseComparesTheEmbeddedFrameworkWithThePinnedVersion() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let pinned = try #require(Self.line(lines, "Package.resolved", "sparkle"), "the pinned Sparkle version is not read")
+        let embedded = try #require(Self.line(lines, "Sparkle.framework", "Versions/B/Resources/Info.plist", "CFBundleShortVersionString")
+                                    ?? Self.line(lines, "$SPARKLE_FRAMEWORK/Versions/B/Resources/Info.plist"))
+        let compare = try #require(lines.indices.first { $0 > max(pinned, embedded) && lines[$0].contains("fail") && lines[$0].contains("Sparkle") })
+        #expect(compare > pinned)
+    }
+
+    @Test func releaseReportsSignUpdateErrorsAndPinsTheTeamAndTools() throws {
+        let lines = try Self.codeLines("scripts/release.sh")
+        let sign = try #require(lines.firstIndex { $0.hasPrefix("SIGNATURE=") && $0.contains("sign_update") })
+        #expect(lines[sign].contains("|| {") && lines[sign].contains("printf '%s\\n' \"$SIGNATURE\" >&2") && lines[sign].contains("fail \"sign_update failed\""),
+                "sign_update's output must be shown when it fails: \(lines[sign])")
+        #expect(lines.contains { $0.contains("/usr/bin/stat -f %z") }, "stat must be the system one")
+        #expect(!lines.contains { $0.contains(" stat ") && !$0.contains("/usr/bin/stat") })
+        #expect(lines.contains { $0.contains("G323SXP8VG") && $0.contains("APP_TEAM") }, "the team is not pinned")
+    }
+
+    @Test func buildScriptTakesTheFrameworkFromTheSliceItLinked() throws {
+        let lines = try Self.codeLines("scripts/build-app.sh")
+        let universal = try #require(lines.firstIndex { $0.contains("SPARKLE_SRC=\".build-arm64/artifacts/") })
+        let fallback = try #require(lines.firstIndex { $0.hasPrefix("SPARKLE_SRC=") && $0.contains(".build/artifacts/") })
+        #expect(universal > 0 && fallback > 0)
+        let missing = try #require(lines.firstIndex { $0.contains("Missing $SPARKLE_SRC") }, "a missing framework is not reported")
+        #expect(missing > max(universal, fallback))
+    }
+
+    @Test func adHocBuildsDoNotPollTheLiveFeed() throws {
+        let lines = try Self.codeLines("scripts/build-app.sh")
+        let adHoc = try #require(Self.line(lines, "IDENTITY=\"-\""))
+        let removal = try #require(Self.line(lines, "Delete :SUFeedURL"), "an ad-hoc build keeps SUFeedURL")
+        let developerID = try #require(Self.line(lines, "IDENTITY=\"$SIGN_IDENTITY\""))
+        #expect(removal > adHoc && removal > developerID)
+        #expect(lines[removal].contains("$APP/Contents/Info.plist"))
+        // The release gate in release.sh keeps the feed in the signed build.
+        let release = try Self.codeLines("scripts/release.sh")
+        #expect(release.contains { $0.contains("SUFeedURL") && $0.contains("https://") })
+    }
+
+    @Test func appcastScriptWritesWithPrintfBecauseEchoExpandsBackslashes() throws {
+        for line in try Self.codeLines("scripts/make-appcast.sh") {
+            #expect(!line.contains("echo "), "\(line)")
+        }
+    }
+
+    @Test func publishedCheckComparesTheFeedAndTheDiskImageWithTheBuild() throws {
+        let lines = try Self.codeLines("scripts/check-published.sh")
+        #expect(lines.contains { $0.contains("/latest/download/appcast.xml") })
+        #expect(lines.contains { $0.contains("/download/v$VERSION/UploadTheFile.dmg") })
+        #expect(lines.contains { $0.contains("cmp") && $0.contains("\"$OUT/appcast.xml\"") })
+        #expect(lines.contains { $0.contains("shasum -a 256") })
+        #expect(lines.contains { $0.contains("UploadTheFile.dmg.sha256") })
+        // It only reads: nothing is uploaded, deleted or signed from here.
+        for line in lines {
+            #expect(!line.contains("gh release") && !line.contains("--upload-file") && !line.contains("sign_update"), "\(line)")
+        }
+    }
+
+    // MARK: Docs and the cask template
+
+    @Test func releasingDocsDescribeTheFixedAppcastKeyRotationAndTheCaskTiming() throws {
+        let releasing = try Self.text("docs/RELEASING.md")
+        #expect(releasing.contains("scripts/check-published.sh"))
+        #expect(releasing.contains("never be edited by hand"))
+        #expect(releasing.contains("SUPublicEDKey"))
+        #expect(releasing.contains("rotat"), "key rotation is not described")
+        #expect(releasing.contains("auto_updates true"))
+        #expect(releasing.contains("Allow"))
+        #expect(!releasing.contains("copies already installed cannot be"), "the key-loss claim is wrong: a signed DMG can carry a new key")
+        #expect(!releasing.contains("a new release always\n   compares as newer"), "the build-number claim needs its conditions")
+        let development = try Self.text("docs/DEVELOPMENT.md")
+        #expect(development.contains("defaults write com.smilemasktechnology.uploadthefile SUEnableAutomaticChecks -bool NO"))
+        #expect(development.contains("IP address"))
+        #expect(!development.contains("whatever the feed says"))
+        let readme = try Self.text("README.md")
+        #expect(readme.contains("right-click menu"))
+    }
+
+    @Test func theCaskTemplateKeepsAutoUpdatesAndRemovesTheCacheOnZap() throws {
+        let cask = try Self.text("packaging/homebrew/upload-the-file.rb")
+        #expect(cask.contains("auto_updates true"))
+        #expect(cask.contains("~/Library/Caches/com.smilemasktechnology.uploadthefile"))
+        #expect(cask.contains("~/Library/HTTPStorages/com.smilemasktechnology.uploadthefile"))
+    }
+
     // MARK: Notices, the snapshot path
 
     @Test func noticesNameSparkleAndIncludeItsLicenceInFull() throws {
@@ -333,9 +492,39 @@ struct UpdateTests {
         let menu = try Self.text("Sources/UploadTheFile/StatusItemController.swift")
         #expect(menu.contains("updates.checkForUpdatesItem()"))
         let updates = try Self.text("Sources/UploadTheFile/Updates.swift")
-        #expect(updates.contains("title: \"Check for Updates…\""))
+        #expect(updates.contains("title: pending.menuTitle"))
         #expect(updates.contains("#selector(SPUStandardUpdaterController.checkForUpdates(_:))"))
         #expect(updates.contains("supportsGentleScheduledUpdateReminders: Bool { true }"))
         #expect(updates.contains("startingUpdater: true"))
+    }
+
+    @Test func aScheduledUpdateNeverTakesTheFocusAndIsAnnouncedInsteadWhenSparkleDoesNotShowIt() throws {
+        let lines = try Self.codeLines("Sources/UploadTheFile/Updates.swift")
+        // Sparkle shows a scheduled update itself only when it is in immediate focus (right after
+        // launch); in every other case it is announced with the menu item and a notification.
+        let handle = try #require(Self.line(lines, "standardUserDriverShouldHandleShowingScheduledUpdate"))
+        #expect(lines[handle..<min(handle + 4, lines.count)].contains { $0.trimmingCharacters(in: .whitespaces) == "immediateFocus" },
+                "a scheduled update must be shown by Sparkle only when it is in immediate focus")
+        #expect(lines.contains { $0.contains("standardUserDriverWillHandleShowingUpdate") })
+        #expect(lines.contains { $0.contains("pending.record(version:") })
+        #expect(lines.contains { $0.contains("Notifier.post") && $0.contains("PendingUpdate.notification") || $0.contains("PendingUpdate.notificationActionKey") })
+        let finish = try #require(Self.line(lines, "standardUserDriverWillFinishUpdateSession"))
+        #expect(lines[finish..<min(finish + 4, lines.count)].contains { $0.contains("pending.clear()") })
+        // Sparkle activates the app for a check the person asked for; nothing here does.
+        for line in lines {
+            #expect(!line.contains("AppActivation") && !line.contains("activate("), "\(line)")
+        }
+    }
+
+    @Test func theUpdaterDelegateKeepsTheFeedAndHoldsTheRelaunchWhilePublishing() throws {
+        let lines = try Self.codeLines("Sources/UploadTheFile/Updates.swift")
+        #expect(lines.contains { $0.contains("updaterDelegate: self") }, "the delegate is not given to the updater")
+        let feed = try #require(Self.line(lines, "feedURLString(for"))
+        #expect(lines[feed..<min(feed + 4, lines.count)].contains { $0.contains("SUFeedURL") },
+                "the feed must come from Info.plist, not from user defaults")
+        let relaunch = try #require(Self.line(lines, "shouldPostponeRelaunchForUpdate"))
+        #expect(lines.contains { $0.contains("untilInvokingBlock") })
+        #expect(lines[relaunch..<min(relaunch + 6, lines.count)].contains { $0.contains("relaunchHold.request(isBusy:") && $0.contains("session.isActive") })
+        #expect(lines.contains { $0.contains("relaunchHold.busyChanged(isBusy:") && $0.contains("session.isActive") })
     }
 }
