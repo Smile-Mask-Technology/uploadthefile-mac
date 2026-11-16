@@ -1,8 +1,8 @@
 # Template for Casks/upload-the-file.rb in Smile-Mask-Technology/homebrew-tap.
 # Fill in version and sha256 from build/release/UploadTheFile.dmg.sha256 (see docs/RELEASING.md).
 cask "upload-the-file" do
-  version "0.1.0"
-  sha256 "76969b57fb6361e4eb30f82b676ec8f370e94448574290790b7899beee3ab8cf"
+  version "0.1.1"
+  sha256 "13697e175599fe9d031f3e188b94874e71315f43fa01cec0baa6b528f01cf6dc"
 
   url "https://github.com/Smile-Mask-Technology/uploadthefile-mac/releases/download/v#{version}/UploadTheFile.dmg"
   name "Upload the File"
