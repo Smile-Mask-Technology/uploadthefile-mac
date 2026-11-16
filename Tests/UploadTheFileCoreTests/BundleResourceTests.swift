@@ -48,8 +48,8 @@ struct BundleResourceTests {
         #expect(plist["NSHumanReadableCopyright"] as? String == "Copyright © 2026 Smile Mask Technology FZE")
     }
 
-    /// THIRD_PARTY_NOTICES.txt ships in the app (build-app.sh) and the DMG (release.sh); it must
-    /// cover every package compiled into them. Versions are not compared here: an older toolchain
+    /// THIRD_PARTY_NOTICES.txt ships inside the app (build-app.sh); it must
+    /// cover every package compiled into it. Versions are not compared here: an older toolchain
     /// (CI's Swift 6.1) re-resolves some packages to older releases. release.sh regenerates the
     /// file from the pins of the build it ships and refuses to release if it changed.
     @Test func thirdPartyNoticesCoverTheLinkedPackages() throws {

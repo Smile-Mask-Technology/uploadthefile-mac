@@ -67,8 +67,13 @@ Everything runs on a Mac with the Command Line Tools (no Xcode needed).
    `SUAllowedURLSchemes` are absent, that the embedded Sparkle version is the one in
    `Package.resolved`, and that
    `Sparkle.framework` (with its `Autoupdate` and `Updater.app`) is signed by the same team as the
-   app with the hardened runtime and has no `XPCServices`. After that it has Apple notarize the app and
-   then the DMG, staples both, checks Gatekeeper, signs the finished DMG for Sparkle
+   app with the hardened runtime and has no `XPCServices`. It also checks that the app carries
+   `LICENSE` and `THIRD_PARTY_NOTICES.txt` in `Contents/Resources` (the disk image holds only the
+   app and the Applications link, no loose licence files). After that it has Apple notarize the
+   app, builds the disk image with `scripts/make-dmg.sh` (a small window: the app on the left, an
+   arrow, the Applications folder on the right; see "The disk image window" in
+   [DEVELOPMENT.md](DEVELOPMENT.md)), signs it, has Apple notarize the DMG, staples both, checks
+   Gatekeeper, signs the finished DMG for Sparkle
    (`sign_update`, verified straight away) and writes
    `build/release/UploadTheFile.dmg`, its `.sha256` and `build/release/appcast.xml` (one item: the
    version, the build number Sparkle compares, the app's minimum macOS, the DMG's address, its

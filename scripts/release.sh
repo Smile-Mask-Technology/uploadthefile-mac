@@ -185,14 +185,9 @@ xcrun stapler staple "$APP"
 rm "$OUT/app.zip"
 
 echo "==> DMG"
-STAGE="$OUT/dmg"
-mkdir -p "$STAGE"
-ditto "$APP" "$STAGE/Upload the File.app"
-ln -s /Applications "$STAGE/Applications"
-cp LICENSE "$STAGE/LICENSE.txt"
-cp THIRD_PARTY_NOTICES.txt "$STAGE/THIRD_PARTY_NOTICES.txt"
-hdiutil create -volname "Upload the File" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" > /dev/null
-rm -rf "$STAGE"
+# The window layout and background come from scripts/dmg-settings.py. The licences are not copied
+# next to the app: the check above proved the app carries both.
+sh scripts/make-dmg.sh "$APP" "$DMG"
 codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 
 echo "==> Notarizing the DMG"
