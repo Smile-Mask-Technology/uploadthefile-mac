@@ -27,6 +27,8 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
     public var passwordProtected: Bool?
     public var emailGateEnabled: Bool?
     public var displayMode: DisplayMode?
+    /// Whether "how it opens" has an effect on this kind of page. nil on an older server.
+    public var displayModeApplies: Bool?
 
     /// What the API calls the page in URLs: the name, or the id when there is no name.
     public var slug: String { name ?? id }
@@ -34,7 +36,8 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
     public init(
         id: String, name: String?, url: String, fileName: String, kind: String, sizeBytes: Int64,
         fileCount: Int, createdAt: Date, expiresAt: Date?, chatEnabled: Bool,
-        passwordProtected: Bool? = nil, emailGateEnabled: Bool? = nil, displayMode: DisplayMode? = nil
+        passwordProtected: Bool? = nil, emailGateEnabled: Bool? = nil, displayMode: DisplayMode? = nil,
+        displayModeApplies: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -49,6 +52,7 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
         self.passwordProtected = passwordProtected
         self.emailGateEnabled = emailGateEnabled
         self.displayMode = displayMode
+        self.displayModeApplies = displayModeApplies
     }
 
     init(_ page: Components.Schemas.ApiPage) {
@@ -57,7 +61,8 @@ public struct PageInfo: Codable, Sendable, Equatable, Identifiable {
             sizeBytes: page.sizeBytes, fileCount: page.fileCount, createdAt: page.createdAt,
             expiresAt: page.expiresAt, chatEnabled: page.chatEnabled,
             passwordProtected: page.passwordProtected, emailGateEnabled: page.emailGateEnabled,
-            displayMode: page.displayMode.flatMap { DisplayMode(rawValue: $0.rawValue) })
+            displayMode: page.displayMode.flatMap { DisplayMode(rawValue: $0.rawValue) },
+            displayModeApplies: page.displayModeApplies)
     }
 }
 

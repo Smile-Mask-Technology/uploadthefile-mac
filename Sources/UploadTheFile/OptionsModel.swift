@@ -137,7 +137,7 @@ final class OptionsModel {
             let api = client
             let id = pageID
             let read = try await SettingsReader.read(
-                readsDisplay: SettingsReader.supportsDisplayMode(kind: fetched.kind),
+                readsDisplay: SettingsReader.supportsDisplayMode(fetched),
                 known: KnownSettings(page: fetched),
                 password: { try await api.passwordProtected(id) },
                 emailGate: {

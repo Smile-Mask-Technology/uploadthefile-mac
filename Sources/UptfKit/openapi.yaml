@@ -2548,6 +2548,9 @@ components:
           description: Whether visitors are asked for their email before they can open the page. Absent on servers that do not report it.
         displayMode:
           $ref: '#/components/schemas/DisplayMode'
+        displayModeApplies:
+          type: boolean
+          description: Whether the display choice has an effect on this kind of page (false for download-only kinds such as archives). Absent on servers that do not report it.
 
     ShortLink:
       type: object

@@ -81,6 +81,12 @@ public enum SettingsReader {
     /// Whether "How it opens" exists for a page of this kind: for a single file, not a website.
     public static func supportsDisplayMode(kind: String) -> Bool { kind != "site" }
 
+    /// Whether "How it opens" is shown for this page: a single file, and one the server says the
+    /// choice applies to (an archive only downloads). An older server doesn't say: kind alone.
+    public static func supportsDisplayMode(_ page: PageInfo) -> Bool {
+        supportsDisplayMode(kind: page.kind) && page.displayModeApplies != false
+    }
+
     /// The settings of a link, one read after the other (a rate limit stops the rest). What
     /// `known` already holds is used without a read; the email gate is read unless the list
     /// says it is off, because its message is only in the read. A server that says no to one of

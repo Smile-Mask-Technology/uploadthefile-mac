@@ -54,7 +54,7 @@ public struct PageRow: Identifiable, Equatable, Sendable {
     public var canReveal: Bool { localURL != nil && (local == .changed || local == .unchanged) }
 
     /// Display mode only means something for a single file, not for a website.
-    public var supportsDisplayMode: Bool { SettingsReader.supportsDisplayMode(kind: page.kind) }
+    public var supportsDisplayMode: Bool { SettingsReader.supportsDisplayMode(page) }
 
     /// The lock in the row: only when the server said the link has a password. A server that does
     /// not report it gives no lock, as it does for a link without one.

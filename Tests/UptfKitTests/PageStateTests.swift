@@ -6,7 +6,7 @@ import Testing
 /// The password, email-gate and display state that a current server puts on every page.
 @Suite("Page state from the list")
 struct PageStateTests {
-    private static let state = #","passwordProtected":true,"emailGateEnabled":false,"displayMode":"preview_download""#
+    private static let state = #","passwordProtected":true,"emailGateEnabled":false,"displayMode":"preview_download","displayModeApplies":true"#
     private static let gateOnState = #","passwordProtected":false,"emailGateEnabled":true,"displayMode":"download""#
 
     private static let passwordRead = #"{"success":true,"data":{"protected":true,"entitled":true}}"#
@@ -41,6 +41,7 @@ struct PageStateTests {
         #expect(page.passwordProtected == true)
         #expect(page.emailGateEnabled == false)
         #expect(page.displayMode == .previewDownload)
+        #expect(page.displayModeApplies == true)
     }
 
     @Test func aServerWithoutTheFieldsLeavesThemUnknown() async throws {
