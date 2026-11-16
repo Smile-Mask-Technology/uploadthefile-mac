@@ -122,6 +122,7 @@ struct OptionsView: View {
             SecureField("New password", text: $model.newPassword, prompt: Text("6 to 72 characters"))
             SecureField("Repeat password", text: $model.confirmPassword)
             if let problem = model.passwordProblem { Hint(problem, isError: true) }
+            if let unread = model.passwordReadError { Hint(unread, isError: true) }
             HStack {
                 StatusLine(status: model.passwordStatus)
                 Spacer()
@@ -141,17 +142,20 @@ struct OptionsView: View {
     private var emailSection: some View {
         Section {
             Toggle("Ask for their email first", isOn: $model.gateEnabled)
+                .disabled(!model.canEditGate)
             TextField("Message", text: $model.gateMessage, prompt: Text("Enter your email to view"), axis: .vertical)
                 .lineLimit(1...3)
+                .disabled(!model.canEditGate)
                 .onChange(of: model.gateMessage) { _, new in
                     let clamped = OptionsRules.clampedGateMessage(new)
                     if clamped != new { model.gateMessage = clamped }
                 }
+            if let unread = model.gateReadError { Hint(unread, isError: true) }
             HStack {
                 StatusLine(status: model.gateStatus)
                 Spacer()
                 Button("Save") { Task { await model.saveGate() } }
-                    .disabled(model.gateStatus.isWorking)
+                    .disabled(!model.canSaveGate)
             }
             StatusNote(status: model.gateStatus, plansURL: appModel.plansURL)
         } header: {
@@ -186,9 +190,11 @@ struct OptionsView: View {
                 Text("Download button only").tag(DisplayMode.download)
             }
             .labelsHidden()
+            .disabled(!model.canChangeDisplay)
             .onChange(of: model.displayMode) { _, mode in
                 if model.load == .loaded, mode != model.savedDisplay { Task { await model.saveDisplay() } }
             }
+            if let unread = model.displayReadError { Hint(unread, isError: true) }
             StatusLine(status: model.displayStatus)
             StatusNote(status: model.displayStatus, plansURL: appModel.plansURL)
         } header: {

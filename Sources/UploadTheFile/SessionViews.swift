@@ -156,16 +156,23 @@ struct SessionStatusView: View {
 
     private func progress(_ title: String, _ session: PublishSession) -> some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.callout).lineLimit(1).truncationMode(.middle)
-                if session.total > 1 {
-                    Text("\(session.position) of \(session.total)").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.callout).lineLimit(1).truncationMode(.middle)
+                    if session.total > 1 {
+                        Text("\(session.position) of \(session.total)").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
+            if session.canStop {
+                Button("Stop") { model.stopQueue() }
+                    .controlSize(.small)
+                    .help("Finishes the one in progress and publishes no more.")
+            }
         }
-        .accessibilityElement(children: .combine)
     }
 
     private func result(_ session: PublishSession) -> some View {
@@ -185,10 +192,19 @@ struct SessionStatusView: View {
             }
             ForEach(Array(session.links.enumerated()), id: \.offset) { _, link in
                 HStack(spacing: 6) {
-                    OpenLinkButton(
-                        text: link.url, accessibilityName: "Open “\(link.name)” in your browser",
-                        font: .system(.caption, design: .monospaced)
-                    ) { model.openLink(link.url) }
+                    // A link that is not a web link is shown as plain text, never as something to click.
+                    if model.canOpenLink(link.url) {
+                        OpenLinkButton(
+                            text: link.url, accessibilityName: "Open “\(link.name)” in your browser",
+                            font: .system(.caption, design: .monospaced)
+                        ) { model.openLink(link.url) }
+                    } else {
+                        Text(link.url)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     Spacer(minLength: 0)
                     CopyLinkIconButton(text: link.url)
                 }
@@ -216,6 +232,8 @@ struct PublishWindowView: View {
         Group {
             if let notice = model.notice {
                 NoticeView(model: model, notice: notice)
+            } else if let batch = model.batch {
+                BatchConfirmationView(model: model, batch: batch)
             } else if let confirmation = model.session.confirmation {
                 ConfirmationView(model: model, confirmation: confirmation)
             } else {
@@ -261,6 +279,56 @@ private struct ProgressResultView: View {
                     Button("Done") { model.dismissSession() }
                         .keyboardShortcut(.defaultAction)
                 }
+            }
+        }
+    }
+}
+
+private struct BatchConfirmationView: View {
+    var model: AppModel
+    var batch: BatchConfirmation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(batch.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    Text(batch.detail).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(batch.shown.enumerated()), id: \.offset) { _, name in
+                        Text(name)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if batch.hiddenCount > 0 {
+                        Text("… and \(batch.hiddenCount) more")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+            }
+            .frame(height: min(180, CGFloat(batch.shown.count + (batch.hiddenCount > 0 ? 1 : 0)) * 17 + 16))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            HStack {
+                Button("Cancel") { model.cancelBatch() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Publish") { model.confirmBatch() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -366,7 +434,7 @@ final class PublishWindowController: NSObject, NSWindowDelegate {
     private var resizeTask: Task<Void, Never>?
 
     func sync(with model: AppModel, suppressed: Bool) {
-        let wanted = model.session.wantsWindow || model.notice != nil
+        let wanted = model.session.wantsWindow || model.notice != nil || model.batch != nil
         if wanted && !suppressed {
             show(model)
             resizeSoon()

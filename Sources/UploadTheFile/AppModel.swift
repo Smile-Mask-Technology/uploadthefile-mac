@@ -31,6 +31,9 @@ final class AppModel {
     private(set) var listState: ListState = .idle
     private(set) var loadedAt: Date?
     private(set) var session = PublishSession()
+    /// More than one item arrived at once and the user has not answered yet: nothing is checked
+    /// or uploaded before they do.
+    private(set) var batch: BatchConfirmation?
     private(set) var notice: Notice?
     /// The row whose link was just copied; cleared after a moment.
     private(set) var copiedPageID: String?
@@ -104,6 +107,7 @@ final class AppModel {
         var rows: [PageRow] = []
         var listState: ListState = .idle
         var session = PublishSession()
+        var batch: BatchConfirmation?
         var notice: Notice?
         var copiedPageID: String?
         var errorMessage: String?
@@ -118,6 +122,7 @@ final class AppModel {
         listState = snapshot.listState
         loadedAt = snapshot.listState == .loaded ? Date() : nil
         session = snapshot.session
+        batch = snapshot.batch
         notice = snapshot.notice
         copiedPageID = snapshot.copiedPageID
         errorMessage = snapshot.errorMessage
@@ -252,9 +257,15 @@ final class AppModel {
 
     func openInBrowser(_ row: PageRow) { openLink(row.page.url) }
 
-    /// Opens a link in the default browser.
+    /// Whether a link from the website may be opened or shown as a link (see `SafeLink`).
+    func canOpenLink(_ link: String) -> Bool {
+        SafeLink.isOpenable(link, site: backend?.config.originURL)
+    }
+
+    /// Opens a link in the default browser. Anything but a web link is ignored.
     func openLink(_ link: String) {
-        if let url = URL(string: link) { NSWorkspace.shared.open(url) }
+        guard let url = SafeLink.url(from: link, site: backend?.config.originURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func reveal(_ row: PageRow) {
@@ -297,10 +308,17 @@ final class AppModel {
     // MARK: Publishing
 
     /// Starts (or joins) a publish. Used by drag and drop, the Choose File… button, the Finder
-    /// service and "Update Link".
-    func publish(_ urls: [URL], intent: PublishIntent = .publish, origin: PublishSession.Origin = .menu) {
+    /// service and "Update Link". More than one item at once first waits for one answer
+    /// (`batch`); `confirmed` is that answer.
+    func publish(
+        _ urls: [URL], intent: PublishIntent = .publish, origin: PublishSession.Origin = .menu,
+        confirmed: Bool = false
+    ) {
         guard !urls.isEmpty else { return }
         refreshAccount()
+        if !confirmed, isSignedIn, backend != nil, askBeforePublishing(urls, intent: intent, origin: origin) {
+            return
+        }
         if !session.isActive {
             finishHandled = false
             windowSuppressed = false
@@ -314,7 +332,43 @@ final class AppModel {
             return
         }
         Task { await Notifier.requestIfNeeded() }
-        perform(session.start(urls, intent: intent, origin: origin))
+        perform(session.start(urls, intent: intent, origin: origin, confirmed: confirmed))
+    }
+
+    /// Holds a publish of several items until the user has said yes to all of them. Items that
+    /// arrive while the question is open join it. True when the publish was held.
+    private func askBeforePublishing(_ urls: [URL], intent: PublishIntent, origin: PublishSession.Origin) -> Bool {
+        if var asked = batch, intent == .publish {
+            asked.add(urls)
+            batch = asked
+        } else if let asked = BatchConfirmation(urls: urls, intent: intent, origin: origin) {
+            batch = asked
+        } else {
+            return false
+        }
+        windowSuppressed = false
+        afterTransition()
+        return true
+    }
+
+    /// "Publish" in the batch question: all of them go, without asking again for each plain file.
+    func confirmBatch() {
+        guard let asked = batch else { return }
+        batch = nil
+        publish(asked.urls, intent: .publish, origin: asked.origin, confirmed: true)
+    }
+
+    /// "Cancel" in the batch question: none of them is published.
+    func cancelBatch() {
+        guard batch != nil else { return }
+        batch = nil
+        afterTransition()
+    }
+
+    /// "Stop": what has not started yet is dropped; the item in progress finishes.
+    func stopQueue() {
+        session.stop()
+        afterTransition()
     }
 
     func chooseAndPublish() {
@@ -326,7 +380,8 @@ final class AppModel {
         panel.message = "Choose the files or folders to publish."
         AppActivation.bringToFront()
         Task {
-            if await panel.begin() == .OK { publish(panel.urls) }
+            // The panel's own Publish button is the answer: no second question for many items.
+            if await panel.begin() == .OK { publish(panel.urls, confirmed: true) }
         }
     }
 
@@ -340,8 +395,10 @@ final class AppModel {
             break
         case .assess(let url, let intent):
             guard let backend else { break }
+            let requireConfirmation = session.assessmentRequiresConfirmation
             Task {
-                let verdict = await PublishAssessor(publisher: backend.publisher).assess(url, intent: intent)
+                let verdict = await PublishAssessor(publisher: backend.publisher)
+                    .assess(url, intent: intent, requireConfirmation: requireConfirmation)
                 guard session.phase == .assessing(url) else { return }  // cancelled meanwhile
                 perform(session.assessed(verdict))
             }
@@ -397,6 +454,8 @@ final class AppModel {
 
     /// The user closed the publish window with the red button.
     func publishWindowWasClosed() {
+        // Closing the window answers a batch question with "Cancel".
+        batch = nil
         switch session.phase {
         case .confirming:
             finishHandled = true

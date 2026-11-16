@@ -59,14 +59,18 @@ public struct PublishSession: Equatable, Sendable {
     /// Items the user said no to (or that were skipped after a failure that stops the batch).
     public private(set) var skipped = 0
     public private(set) var total = 0
+    /// The item in `.assessing` has to be confirmed even when it is a plain file (it came from
+    /// the Finder Service and nobody has said yes to it yet).
+    public private(set) var assessmentRequiresConfirmation = false
 
-    private var pending: [(url: URL, intent: PublishIntent)] = []
+    private var pending: [(url: URL, intent: PublishIntent, requireConfirmation: Bool)] = []
 
     public init() {}
 
     public static func == (lhs: PublishSession, rhs: PublishSession) -> Bool {
         lhs.phase == rhs.phase && lhs.origin == rhs.origin && lhs.links == rhs.links
             && lhs.problems == rhs.problems && lhs.skipped == rhs.skipped && lhs.total == rhs.total
+            && lhs.assessmentRequiresConfirmation == rhs.assessmentRequiresConfirmation
             && lhs.pending.map(\.url) == rhs.pending.map(\.url)
     }
 
@@ -80,6 +84,9 @@ public struct PublishSession: Equatable, Sendable {
     }
 
     public var isFinished: Bool { phase == .finished }
+
+    /// Items are still waiting behind the one in progress, so "Stop" has something to end.
+    public var canStop: Bool { isActive && !pending.isEmpty }
 
     /// The confirmation being asked, if any.
     public var confirmation: PublishConfirmation? {
@@ -141,17 +148,22 @@ public struct PublishSession: Equatable, Sendable {
     }
 
     /// Adds files or folders. While a session is running they join its queue; after one finished a
-    /// fresh session begins.
-    public mutating func start(_ urls: [URL], intent: PublishIntent = .publish, origin: Origin = .menu) -> PublishEffect {
+    /// fresh session begins. Items from the Finder Service each need a confirmation of their own
+    /// (`assessmentRequiresConfirmation`) unless `confirmed`: the user already said yes to the
+    /// whole list in a batch confirmation.
+    public mutating func start(
+        _ urls: [URL], intent: PublishIntent = .publish, origin: Origin = .menu, confirmed: Bool = false
+    ) -> PublishEffect {
         guard !urls.isEmpty else { return .none }
+        let ask = origin == .finder && !confirmed
         if isActive {
-            pending += urls.map { ($0, intent) }
+            pending += urls.map { ($0, intent, ask) }
             total += urls.count
             return .none
         }
         self = PublishSession()
         self.origin = origin
-        pending = urls.map { ($0, intent) }
+        pending = urls.map { ($0, intent, ask) }
         total = urls.count
         return advance()
     }
@@ -205,6 +217,13 @@ public struct PublishSession: Equatable, Sendable {
         }
     }
 
+    /// Ends the queue after the item in progress: whatever has not started is dropped and no
+    /// longer counts, the item being worked on (asked about, checked or uploading) goes on.
+    public mutating func stop() {
+        total -= pending.count
+        pending = []
+    }
+
     public mutating func uploaded(url: String) -> PublishEffect {
         guard case .uploading(let name, let isUpdate) = phase else { return .none }
         links.append(PublishedLink(name: name, url: url, kind: isUpdate ? .updated : .published))
@@ -243,10 +262,12 @@ public struct PublishSession: Equatable, Sendable {
     private mutating func advance() -> PublishEffect {
         guard !pending.isEmpty else {
             phase = .finished
+            assessmentRequiresConfirmation = false
             return .none
         }
         let next = pending.removeFirst()
         phase = .assessing(next.url)
+        assessmentRequiresConfirmation = next.requireConfirmation
         return .assess(next.url, next.intent)
     }
 }

@@ -167,7 +167,8 @@ public enum PublishAssessment: Equatable, Sendable {
     case refused(String)
     /// Needs the user's decision first.
     case confirm(PublishConfirmation)
-    /// Plain case: a normal file that is not published yet, or an explicit update of one.
+    /// Plain case: a normal file that is not published yet, or an explicit update of one (and no
+    /// confirmation was required).
     case upload(UploadRequest)
 }
 
@@ -210,7 +211,10 @@ public struct PublishAssessor: Sendable {
             })
     }
 
-    public func assess(_ url: URL, intent: PublishIntent) async -> PublishAssessment {
+    /// With `requireConfirmation` even a plain file that is not published yet waits for an answer:
+    /// the caller is not the user's own window (a request that arrived through the Finder Service
+    /// can come from any app), so nothing goes online without the user saying yes.
+    public func assess(_ url: URL, intent: PublishIntent, requireConfirmation: Bool = false) async -> PublishAssessment {
         // The size limit and the empty-folder rule apply even to places we would only warn about.
         let plan: PublishPlan
         do {
@@ -238,7 +242,7 @@ public struct PublishAssessor: Sendable {
                 folderName: url.lastPathComponent, entries: plan.entries, servedAsWebsite: plan.hasRootIndexHtml)
         }
         let alreadyPublished = !isUpdate && existing != nil
-        if warnings.isEmpty && folder == nil && !alreadyPublished {
+        if warnings.isEmpty && folder == nil && !alreadyPublished && !requireConfirmation {
             return .upload(UploadRequest(plan: plan, update: isUpdate ? existing?.entry : nil))
         }
         return .confirm(
