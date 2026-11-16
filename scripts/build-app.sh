@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds "Upload the File.app" into build/.
 #
-#   scripts/build-app.sh                       ad-hoc signed (runs on this Mac only)
+#   scripts/build-app.sh                       ad-hoc signed (runs on this Mac only; no hardened runtime)
 #   SIGN_IDENTITY="Developer ID Application: ..." scripts/build-app.sh
 #                                              signed with hardened runtime and a timestamp
 #   UNIVERSAL=1 scripts/build-app.sh           Apple silicon + Intel (scripts/release.sh sets it)
@@ -10,13 +10,18 @@
 # UNIVERSAL=1 and RELEASE=1 build with --force-resolved-versions: the build fails instead of
 # re-resolving packages that differ from Package.resolved.
 #
-# The bundle holds the menu bar app (Contents/MacOS/UploadTheFile) and the command-line tool
-# (Contents/Resources/uptf). Notarization is done by scripts/release.sh, not here.
+# The bundle holds the menu bar app (Contents/MacOS/UploadTheFile), the command-line tool
+# (Contents/Resources/uptf) and Sparkle.framework (Contents/Frameworks), which updates the app.
+# Notarization is done by scripts/release.sh, not here.
 set -eu
 cd "$(dirname "$0")/.."
 
 APP_NAME="Upload the File"
 APP="build/$APP_NAME.app"
+FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+# Sparkle's binary package: one macOS slice holding Apple silicon and Intel, so a universal build
+# embeds the same framework as a single-architecture one.
+SPARKLE_SRC=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 VERSION="$(cat VERSION)"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 ENTITLEMENTS="Resources/UploadTheFile.entitlements"
@@ -69,6 +74,14 @@ cp THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 cp LICENSE "$APP/Contents/Resources/LICENSE"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# Sparkle.framework, copied with ditto so the symlinks inside it survive (a plain copy breaks the
+# framework's signature). The app is not sandboxed, so Sparkle's XPC services are never used;
+# Sparkle documents removing them, and they must go before the framework is signed.
+[ -d "$SPARKLE_SRC" ] || { echo "Missing $SPARKLE_SRC; run scripts/test.sh (or swift build) once to fetch the packages" >&2; exit 1; }
+mkdir -p "$APP/Contents/Frameworks"
+ditto --norsrc --noextattr --noqtn "$SPARKLE_SRC" "$FRAMEWORK"
+rm -rf "$FRAMEWORK/Versions/B/XPCServices" "$FRAMEWORK/XPCServices"
+
 PLIST_BUDDY=/usr/libexec/PlistBuddy
 "$PLIST_BUDDY" -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 "$PLIST_BUDDY" -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
@@ -90,15 +103,28 @@ echo "==> Signing"
 if [ -n "${SIGN_IDENTITY:-}" ]; then
   IDENTITY="$SIGN_IDENTITY"
   TIMESTAMP="--timestamp"
+  RUNTIME="--options runtime"
 else
   IDENTITY="-"
   TIMESTAMP="--timestamp=none"   # ad-hoc: no network round trip to a timestamp server
-  echo "    SIGN_IDENTITY is not set: ad-hoc signature (this Mac only)"
+  # Library validation (part of the hardened runtime) refuses a framework that has no team in
+  # its signature, so an ad-hoc build of an app that embeds Sparkle runs without the runtime.
+  RUNTIME=""
+  echo "    SIGN_IDENTITY is not set: ad-hoc signature, without the hardened runtime (this Mac only)"
 fi
-# The embedded CLI first, then the app that contains it.
-codesign --force --options runtime $TIMESTAMP --entitlements "$ENTITLEMENTS" \
+# Inside out, each piece signed on its own (never --deep): Sparkle's helper tool and helper app,
+# the framework that contains them, the embedded CLI, then the app that contains all of it.
+# shellcheck disable=SC2086
+codesign --force $RUNTIME $TIMESTAMP --sign "$IDENTITY" "$FRAMEWORK/Versions/B/Autoupdate"
+# shellcheck disable=SC2086
+codesign --force $RUNTIME $TIMESTAMP --sign "$IDENTITY" "$FRAMEWORK/Versions/B/Updater.app"
+# shellcheck disable=SC2086
+codesign --force $RUNTIME $TIMESTAMP --sign "$IDENTITY" "$FRAMEWORK"
+# shellcheck disable=SC2086
+codesign --force $RUNTIME $TIMESTAMP --entitlements "$ENTITLEMENTS" \
   --identifier com.smilemasktechnology.uploadthefile.uptf --sign "$IDENTITY" "$APP/Contents/Resources/uptf"
-codesign --force --options runtime $TIMESTAMP --entitlements "$ENTITLEMENTS" \
+# shellcheck disable=SC2086
+codesign --force $RUNTIME $TIMESTAMP --entitlements "$ENTITLEMENTS" \
   --sign "$IDENTITY" "$APP"
 
 echo "==> Verifying"
